@@ -1,0 +1,41 @@
+[
+  {
+    "deadLetterDestination": null,
+    "deadLetterWithResourceIdentity": null,
+    "deliveryWithResourceIdentity": null,
+    "destination": {
+      "azureActiveDirectoryApplicationIdOrUri": null,
+      "azureActiveDirectoryTenantId": null,
+      "deliveryAttributeMappings": null,
+      "endpointBaseUrl": "https://tpe-call-controller.mangomushroom-8c85c1e1.eastus.azurecontainerapps.io/api/incoming",
+      "endpointType": "WebHook",
+      "endpointUrl": null,
+      "maxEventsPerBatch": 1,
+      "preferredBatchSizeInKilobytes": 64
+    },
+    "eventDeliverySchema": "EventGridSchema",
+    "expirationTimeUtc": null,
+    "filter": {
+      "advancedFilters": null,
+      "enableAdvancedFilteringOnArrays": null,
+      "includedEventTypes": [
+        "Microsoft.Communication.IncomingCall"
+      ],
+      "isSubjectCaseSensitive": null,
+      "subjectBeginsWith": "",
+      "subjectEndsWith": ""
+    },
+    "id": "/subscriptions/e5ffd4dd-ed31-4776-abdb-2365cf2ac870/resourceGroups/sharepointdemo/providers/Microsoft.EventGrid/systemTopics/acs-jmdeere-demo-topic/eventSubscriptions/tpe-live-intake-incoming",
+    "labels": null,
+    "name": "tpe-live-intake-incoming",
+    "provisioningState": "Succeeded",
+    "resourceGroup": "sharepointdemo",
+    "retryPolicy": {
+      "eventTimeToLiveInMinutes": 1440,
+      "maxDeliveryAttempts": 30
+    },
+    "systemData": null,
+    "topic": "/subscriptions/e5ffd4dd-ed31-4776-abdb-2365cf2ac870/resourceGroups/sharepointdemo/providers/Microsoft.EventGrid/systemTopics/acs-jmdeere-demo-topic",
+    "type": "Microsoft.EventGrid/systemTopics/eventSubscriptions"
+  }
+]

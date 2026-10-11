@@ -1,0 +1,43 @@
+{
+  "deadLetterDestination": null,
+  "deadLetterWithResourceIdentity": null,
+  "deliveryWithResourceIdentity": null,
+  "destination": {
+    "azureActiveDirectoryApplicationIdOrUri": "api://d4f88048-672d-46b3-a725-270e5a3a4105",
+    "azureActiveDirectoryTenantId": "2a6b0179-1024-4bb4-b600-02610eaaed75",
+    "deliveryAttributeMappings": null,
+    "endpointBaseUrl": "https://ai-foundry-demo-jm.services.ai.azure.com/api/projects/firstProject/agents/floorworks-voice-agent/endpoint/protocols/voice/telephony/azure-communication-services/callbacks/incoming-call",
+    "endpointType": "WebHook",
+    "endpointUrl": null,
+    "maxEventsPerBatch": 1,
+    "preferredBatchSizeInKilobytes": 64
+  },
+  "eventDeliverySchema": "EventGridSchema",
+  "expirationTimeUtc": null,
+  "filter": {
+    "advancedFilters": null,
+    "enableAdvancedFilteringOnArrays": null,
+    "includedEventTypes": [
+      "Microsoft.Communication.IncomingCall"
+    ],
+    "isSubjectCaseSensitive": null,
+    "subjectBeginsWith": "",
+    "subjectEndsWith": ""
+  },
+  "id": "/subscriptions/e5ffd4dd-ed31-4776-abdb-2365cf2ac870/resourceGroups/sharepointdemo/providers/Microsoft.Communication/CommunicationServices/acs-jmdeere-demo/providers/Microsoft.EventGrid/eventSubscriptions/incoming-call-foundry-floorworks-voice-agent-lqfghb",
+  "labels": [
+    "voice-first",
+    "channels",
+    "incoming-call"
+  ],
+  "name": "incoming-call-foundry-floorworks-voice-agent-lqfghb",
+  "provisioningState": "Succeeded",
+  "resourceGroup": "sharepointdemo",
+  "retryPolicy": {
+    "eventTimeToLiveInMinutes": 1440,
+    "maxDeliveryAttempts": 30
+  },
+  "systemData": null,
+  "topic": "/subscriptions/e5ffd4dd-ed31-4776-abdb-2365cf2ac870/resourceGroups/sharepointdemo/providers/microsoft.communication/communicationservices/acs-jmdeere-demo",
+  "type": "Microsoft.EventGrid/eventSubscriptions"
+}

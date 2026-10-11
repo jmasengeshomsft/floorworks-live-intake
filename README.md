@@ -1,70 +1,78 @@
 # FloorWorks Live Intake
 
-A customer calls a phone number; a service rep answers in **Microsoft Teams**; while they talk, the call is
-transcribed live and a **Microsoft Foundry agent** fills in an intake form, checking equipment, quality alerts
-and service tickets in **Dataverse** through the Dataverse **MCP server**.
+**An AI receptionist that answers your service line, a note-taker that fills in the ticket while the customer talks,
+and a human rep who reviews and submits it.**
+
+A customer dials one number. An AI voice agent answers instantly, finds the equipment in Dataverse, and brings in a human
+rep on request, all on the same call. Behind the scenes a second agent keeps a **draft service request** up to date. The
+rep sees it fill in live, fixes anything, and clicks **Submit**. Only then is a real service ticket created.
 
 ```
-PSTN caller ─► Teams number (resource account, TPE) ─► ACS Call Automation ─► Event Grid IncomingCall
-                                                              │ answer + unmixed audio over WebSocket
-                                  rep rings in Teams ◄────────┤
-                                                              ▼
- call-controller (/api/incoming, /api/callbacks)      stream-processor (/ws/{callId}, /events/{callId} SSE)
-                                                        Azure Speech STT per participant
-                                                              │ transcript
-                                                              ▼
-                                       Foundry prompt agent ──MCP (project managed identity)──► Dataverse
+Caller ─► AI receptionist ─(on request)─► Human rep joins the same call
+              │
+              └─ note-taker ─► Draft in Dataverse ─► Rep Console ─ Submit ─► Service Ticket
 ```
 
-SSE events on `/events/{callId}`: `partial`, `final` (transcripts with `speaker` = customer|rep), `fields`
-(extracted form, confidence, matches, missing, next_question), `error`, `end`. Any UI (e.g. a Power Apps canvas app) can subscribe.
+## Why it is different
 
-## Layout
+- **Draft, then human submit.** Agents never create tickets. Trust is built into the design.
+- **One call, one app.** No bot VMs; the app owns the call end to end.
+- **Native Microsoft Foundry agents** with business data from the **Dataverse MCP server**.
+- **Rep edits always win.** Corrections are never overwritten by the AI.
+- **Nothing is lost.** The draft and transcript persist even if the call drops.
+
+## Documentation
+
+| Start with | |
+|---|---|
+| [Solution overview](docs/01-overview.md) | What it does and why |
+| [Architecture](docs/02-architecture.md) | Diagrams and call lifecycle |
+| [Deployment guide](docs/03-deployment.md) | Stand it up in your tenant |
+| [Demo guide](docs/11-demo-guide.md) | Run a clean demo |
+
+Everything else is indexed in **[docs/README.md](docs/README.md)**: configuration, data model, AI agents, rep console,
+operations and troubleshooting, security, roadmap and glossary.
+
+## Repository layout
+
 | Path | Purpose |
 |---|---|
-| `src/CallController` | Answers incoming calls, starts media streaming, rings the rep(s) in Teams |
-| `src/StreamProcessor` | WebSocket audio in, Speech STT, calls the Foundry agent, SSE out |
-| `src/Simulator` | Replays WAV files as ACS-style frames to test without a phone call |
-| `dataverse/` | Schema + seed data (Equipment, Part, Quality Alert, Service Ticket) |
-| `foundry/` | Agent instructions and the script that wires Foundry to Dataverse |
-| `infra/` | Container Apps deploy, bot / Event Grid setup |
-| `teams/` | Teams resource account, number, rep voice enablement |
+| [`src/VoiceIntake`](src/README.md) | **The product**: call handling, speech, agents, draft store, Rep Console |
+| `src/CallController`, `src/StreamProcessor`, `src/Simulator` | Earlier two-service pipeline and a WAV replay simulator |
+| [`dataverse/`](dataverse/README.md) | Schema and seed script for the manufacturing data |
+| [`foundry/`](foundry/README.md) | Agent instructions, publishing and Foundry-to-Dataverse wiring |
+| [`infra/`](infra/README.md) | Deployment and Azure telephony setup |
+| [`teams/`](teams/README.md) | Teams number and rep enablement |
+| [`experiments/`](experiments/README.md) | `AudioProbe` diagnostics |
+| [`docs/`](docs/README.md) | All documentation |
 
-## Prerequisites
-- Azure subscription, a Container Apps environment, ACR, an Azure Communication Services resource, a Foundry account + project
-  (with a model deployment and an Azure Speech-capable key on the Foundry/AI Services account)
-- A Power Platform environment with Dataverse (e.g. a free developer environment)
-- Teams: a Teams admin, a phone number you own that can be assigned to a voice application,
-  a *Teams Phone Resource Account* license, and reps with a Teams Phone license who stay signed in to Teams
-- PowerShell 7, Azure CLI (+ `containerapp`, `communication` extensions), the `MicrosoftTeams` PowerShell module, .NET 8 SDK
+## Quick start
 
-## Setup
-1. **Dataverse data** – `dataverse/provision-dataverse.ps1 -OrgUrl https://<org>.crm.dynamics.com`
-2. **Services** – `infra/deploy.ps1 -ResourceGroup … -ContainerAppsEnv … -AcrName … -AcsName … -FoundryAccount … -FoundryProject … -RepObjectIds <rep-entra-object-id>`
-3. **Foundry ↔ Dataverse** – `foundry/setup-foundry.ps1 …`: creates an application user for the **project managed identity**,
-   adds it to Dataverse *Allowed MCP Clients*, creates a `ProjectManagedIdentity` connection, publishes the agent.
-   (A per-user OAuth MCP connection returns 401 for unattended services; this avoids it.)
-   Also enable *Allow MCP clients to interact with Dataverse MCP server* in Power Platform admin center → Environment → Settings → Features.
-4. **TPE Azure side** – `infra/setup-tpe-azure.ps1 …` (bot with Teams calling channel, ACS service principal, Event Grid subscription)
-5. **TPE Teams side** – `teams/setup-teams.ps1 …` (resource account, number, license, rep Enterprise Voice). Prompts for a device-code sign-in.
-6. Call the number, answer in Teams, and watch `https://<stream-processor>/events/<callId>` (call ids appear in the controller logs).
-
-> The scripts were consolidated from steps run manually during the proof of concept. `provision-dataverse.ps1`, the Foundry
-> wiring and the two services were exercised end to end; `setup-tpe-azure.ps1`, `setup-teams.ps1` and `deploy.ps1` are
-> parameterized rewrites that have not been run as-is. Expect small fixes.
-
-## Local test without a phone call
-```
-$env:SPEECH_KEY=…; $env:SPEECH_REGION=eastus; $env:FOUNDRY_PROJECT_ENDPOINT=…; $env:LOCAL_DEV=1   # LOCAL_DEV uses your az login
-dotnet run --project src/StreamProcessor
-dotnet run --project src/Simulator -- ws://localhost:5000/ws/test customer=customer.wav rep=rep.wav   # 16 kHz/16-bit/mono WAVs
-curl -N http://localhost:5000/events/test
+```powershell
+# 1. Data
+dataverse/provision-dataverse.ps1 -OrgUrl https://<org>.crm.dynamics.com
+# 2. Foundry <-> Dataverse, agents, toolbox     -> foundry/README.md
+# 3. Telephony (bot, Event Grid, Teams number)  -> infra/README.md, teams/README.md
+# 4. App
+az acr build -r <acr> -t voice-intake:v1 src/VoiceIntake       # then create the Container App: docs/03-deployment.md
 ```
 
-## Known limits / gotchas
-- Dataverse application user is granted **System Administrator** for the demo; create a least-privilege role for real use.
-- Pointing the number at the resource account bypasses any Auto Attendant greeting; callers hear silence until the rep answers.
-- Reps must be Enterprise Voice enabled and signed in to Teams, otherwise `AddParticipant` fails with 480 / 10037.
-- Speaker roles are heuristic (first stream = customer, second = rep). Transcripts and extracted fields are kept in memory only.
-- Speech may mis-spell names; consider a phrase list.
-- `LOCAL_DEV=1` swaps in `AzureCliCredential`; deployed apps use managed identity.
+Then open `https://<app>/rep?k=<rep-key>` and call your number.
+
+## Status
+
+Proof of concept, running in one tenant. Core flow works end to end: inbound call, AI receptionist, Dataverse lookups,
+rep transfer, live draft and form, rep Submit. Not yet production-ready: see the
+[security checklist](docs/09-security.md) and the [roadmap](docs/10-roadmap.md) (least-privilege roles, Entra sign-in for
+reps, recording disclosure, durable state, infrastructure as code).
+
+## Prerequisites at a glance
+
+Azure subscription with Container Apps, ACR, ACS, Speech and a Foundry project · Dataverse environment · Teams with a
+phone number, a resource-account license and Enterprise Voice reps · PowerShell 7, Azure CLI, .NET 8 SDK.
+Details in the [deployment guide](docs/03-deployment.md#1--prerequisites).
+
+## License and sharing
+
+No license has been chosen. Do not publish or share this repository until you decide on one and have removed any
+environment-specific values (see [configuration](docs/04-configuration.md#reference-deployment-values)).

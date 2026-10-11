@@ -122,6 +122,26 @@ EnsureTable 'serviceticket' 'Service Ticket' 'Service Tickets' 'Maintenance / re
   (PickAttr 'status' 'Status' @('Open', 'In Progress', 'Waiting for Parts', 'Resolved')),
   (MemoAttr 'description' 'Description'), (StrAttr 'assignedtechnician' 'Assigned Technician' 100), (DateAttr 'openedon' 'Opened On'))
 
+EnsureTable 'customer' 'Customer' 'Customers' 'Customer account that calls in for service' 'Account Name' @(
+  (StrAttr 'accountnumber' 'Account Number' 50), (StrAttr 'firstname' 'First Name' 100), (StrAttr 'lastname' 'Last Name' 100),
+  (StrAttr 'primaryphone' 'Primary Phone' 30), (StrAttr 'email' 'Email Address' 200), (StrAttr 'street' 'Street' 200),
+  (StrAttr 'city' 'City' 100), (StrAttr 'state' 'State' 50), (StrAttr 'zip' 'Zip' 20))
+
+EnsureTable 'servicerequestdraft' 'Service Request Draft' 'Service Request Drafts' 'Live draft built by the agents during a call; the rep submits it to create the service ticket' 'Draft Title' @(
+  (StrAttr 'callid' 'Call ID' 100), (StrAttr 'callerphone' 'Caller Phone' 30), (StrAttr 'customername' 'Customer Name (heard)' 200),
+  (StrAttr 'equipmenttext' 'Equipment (heard)' 200), (MemoAttr 'complaint' 'Complaint' 4000),
+  (PickAttr 'priority' 'Priority' @('Low', 'Normal', 'High', 'Urgent')), (MemoAttr 'summary' 'Summary' 4000),
+  (MemoAttr 'transcript' 'Transcript' 100000), (MemoAttr 'coaching' 'Coaching Prompts' 2000),
+  (PickAttr 'status' 'Draft Status' @('Draft', 'Submitted', 'Discarded')), (StrAttr 'submittedby' 'Submitted By' 200),
+  (DateAttr 'submittedon' 'Submitted On'),
+  (StrAttr 'contactphone' 'Contact Phone' 30), (StrAttr 'assetnumber' 'Asset Number' 100), (StrAttr 'location' 'Location' 200),
+  (StrAttr 'preferredtime' 'Preferred Time' 200), (StrAttr 'editedfields' 'Rep-edited fields' 300))
+
+EnsureLookup 'equipment' 'customer' 'CustomerId' 'Customer'
+EnsureLookup 'servicerequestdraft' 'customer' 'CustomerId' 'Customer'
+EnsureLookup 'servicerequestdraft' 'equipment' 'EquipmentId' 'Equipment'
+EnsureLookup 'servicerequestdraft' 'serviceticket' 'TicketId' 'Service Ticket'
+EnsureLookup 'serviceticket' 'customer' 'CustomerId' 'Customer'
 EnsureLookup 'qualityalert' 'part' 'PartId' 'Part'
 EnsureLookup 'qualityalert' 'equipment' 'EquipmentId' 'Equipment'
 EnsureLookup 'serviceticket' 'equipment' 'EquipmentId' 'Equipment'
@@ -185,6 +205,22 @@ Seed 'serviceticket' @(
   (Ticket 'Inspect furnace F2 heating elements' 'High' 'Open' 'Full resistance check on all element banks.' 'Marc Dubois' '2026-10-01T07:45:00Z' 'Heat Treat Furnace F2' 'Heating element burnout trend'),
   (Ticket 'Packaging line A preventive maintenance' 'Low' 'In Progress' 'Quarterly PM including torque audit.' 'Sofie Peeters' '2026-10-06T08:00:00Z' 'Packaging Line A' 'Bolt torque-to-yield failures'),
   (Ticket 'Injection press 2 hydraulic pressure drift' 'Normal' 'Open' 'Pressure drifting 5 percent during hold phase.' 'Carlos Mendez' '2026-10-07T12:10:00Z' 'Injection Press 2' 'Coolant concentration out of spec')) | Out-Null
+
+$cuSet = Sets 'customer'
+function Cust($acct, $first, $last, $phone, $email, $street, $city, $state, $zip) {
+  @{ bdm_name = "$first $last".ToUpper(); bdm_accountnumber = $acct; bdm_firstname = $first; bdm_lastname = $last; bdm_primaryphone = $phone
+     bdm_email = $email; bdm_street = $street; bdm_city = $city; bdm_state = $state; bdm_zip = $zip }
+}
+$cu = Seed 'customer' @(
+  (Cust '33507' 'Abby' 'Smith' '9374699275' 'abby.smith@example.com' '2284 HWY K 20' 'East Moline' 'IL' '61244'),
+  (Cust '21063' 'John' 'Brown' '9888472750' 'john.brown@example.com' '613 PINE' 'East Moline' 'IL' '61244'),
+  (Cust '40112' 'Aaron' 'Minde' '9374699271' 'aaron.minde@example.com' '88 Oak Ave' 'Moline' 'IL' '61265'),
+  (Cust '40113' 'Jamie' 'Fergison' '1234567890' 'jamie.fergison@example.com' '5 Mill Rd' 'Davenport' 'IA' '52801'))
+$ownership = @{ 'CNC Mill 3' = 'ABBY SMITH'; 'Injection Press 2' = 'ABBY SMITH'; 'Robotic Welder R7' = 'JOHN BROWN'; 'Hydraulic Press H1' = 'JOHN BROWN';
+  'Packaging Line A' = 'AARON MINDE'; 'Heat Treat Furnace F2' = 'JAMIE FERGISON' }
+foreach ($e in $ownership.Keys) {
+  Dv PATCH "$eqSet($($eq[$e]))" @{ 'bdm_CustomerId@odata.bind' = "/$cuSet($($cu[$ownership[$e]]))" } | Out-Null
+}
 
 Write-Host "Done. equipment=$($eq.Count) parts=$($pt.Count) alerts=$($qa.Count)"
 

@@ -1,0 +1,12 @@
+{
+  "tools": [
+    {
+      "type": "mcp",
+      "name": "dataverse-mfg",
+      "server_label": "dataverse-mfg",
+      "server_url": "https://<org>.crm.dynamics.com/api/mcp",
+      "project_connection_id": "dataverse-mfg-mi"
+    }
+  ]
+}
+
