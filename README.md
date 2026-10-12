@@ -13,6 +13,8 @@ Caller ─► AI receptionist ─(on request)─► Human rep joins the same cal
               └─ note-taker ─► Draft in Dataverse ─► Rep Console ─ Submit ─► Service Ticket
 ```
 
+![System context: caller, ACS, VoiceIntake container app, Foundry agents, Dataverse](docs/images/architecture.png)
+
 > **Disclaimer.** This is a sample, customized implementation of the
 > [Azure-Samples/call-center-voice-agent-accelerator](https://github.com/Azure-Samples/call-center-voice-agent-accelerator).
 > It also uses the [Dataverse MCP server in Microsoft Foundry](https://techcommunity.microsoft.com/blog/azure-ai-foundry-blog/consume-dataverse-mcp-server-in-microsoft-foundry-bringing-business-data-to-ai-a/4548218)
@@ -23,10 +25,6 @@ Caller ─► AI receptionist ─(on request)─► Human rep joins the same cal
 - [Call center voice agent accelerator](https://github.com/Azure-Samples/call-center-voice-agent-accelerator): the base this project customizes.
 - [Consume the Dataverse MCP server in Microsoft Foundry](https://techcommunity.microsoft.com/blog/azure-ai-foundry-blog/consume-dataverse-mcp-server-in-microsoft-foundry-bringing-business-data-to-ai-a/4548218)
 - [Voice agent telephony channels: configure transfer to a person](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/voice-agent-telephony-channels?tabs=portal#configure-transfer-to-a-person)
-
-## Architecture
-
-![System context: caller, ACS, VoiceIntake container app, Foundry agents, Dataverse](docs/images/architecture.png)
 
 ## Why it is different
 
