@@ -2,9 +2,8 @@
 
 | File | Purpose |
 |---|---|
-| `setup-foundry.ps1` | Grants the Foundry **project managed identity** access to Dataverse (application user, role, allowed MCP client), creates the `dataverse-mfg-mi` connection, publishes the original extractor agent |
+| `setup-foundry.ps1` | Grants the Foundry **project managed identity** access to Dataverse (application user, role, allowed MCP client), creates the `dataverse-mfg-mi` connection |
 | `notetaker-instructions.md` | Current prompt for the `floorworks-notetaker` agent (read-only, structured JSON) |
-| `instructions.md` | Prompt of the **legacy** extractor agent (`floorworks-intake-extractor`) from the first pipeline |
 | `publish-draft-flow-agents.ps1` | Publishes new versions of the note-taker and the receptionist voice agent for the draft-then-submit flow |
 | `toolbox.sample.json` | Example toolbox definition exposing the Dataverse MCP server to the voice agent |
 | `FloorWorks.FoundryIq.csproj`, `Program.cs`, `Corpus.cs` | .NET CLI that builds the Foundry IQ knowledge base (`dotnet run -- preflight\|all\|ask "..."`) |

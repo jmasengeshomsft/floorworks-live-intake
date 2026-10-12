@@ -1,5 +1,5 @@
 <#
- Wires Foundry to Dataverse and publishes the extractor agent.
+ Wires Foundry to Dataverse.
   1. Grants the Foundry PROJECT managed identity access to Dataverse (application user + role + allowed MCP client).
   2. Creates a project connection that uses the project managed identity (no per-user sign-in, so it works unattended).
   3. Publishes a new version of the prompt agent pointing at that connection.
@@ -12,9 +12,7 @@ param(
   [Parameter(Mandatory)][string]$FoundryAccount,       # e.g. my-foundry
   [Parameter(Mandatory)][string]$FoundryProject,       # e.g. firstProject
   [Parameter(Mandatory)][string]$OrgUrl,               # e.g. https://myorg.crm.dynamics.com
-  [string]$AgentName = 'floorworks-intake-extractor',
   [string]$ConnectionName = 'dataverse-mfg-mi',
-  [string]$Model = 'gpt-5.6-sol',
   # Broad on purpose for a demo; replace with a least-privilege custom role for production.
   [string]$DataverseRole = 'System Administrator'
 )
@@ -67,19 +65,3 @@ $f = TmpJson $conn
 az rest --method put --url "https://management.azure.com$projectArm/connections/$ConnectionName`?api-version=2025-04-01-preview" --body "@$f" -o none
 Remove-Item $f
 Write-Host "Connection '$ConnectionName' created."
-
-# 3. Agent
-$def = @{
-  kind = 'prompt'; model = $Model
-  instructions = (Get-Content (Join-Path $PSScriptRoot 'instructions.md') -Raw)
-  reasoning = @{ effort = 'low' }
-  tools = @(@{ type = 'mcp'; server_label = 'dataverse-mfg'; server_url = "$OrgUrl/api/mcp"
-               require_approval = 'never'; project_connection_id = $ConnectionName })
-}
-$f = TmpJson @{ description = 'Live intake extractor (Dataverse MCP via project managed identity)'; definition = $def }
-$tok = az account get-access-token --resource https://ai.azure.com --query accessToken -o tsv
-$res = curl.exe -s -X POST "$endpoint/agents/$AgentName/versions?api-version=v1" -H "Authorization: Bearer $tok" -H 'Content-Type: application/json' --data "@$f" | ConvertFrom-Json
-Remove-Item $f
-if (-not $res.version) { throw "Agent publish failed: $($res | ConvertTo-Json -Depth 5)" }
-Write-Host "Agent '$AgentName' version $($res.version) published."
-Write-Host "Set FOUNDRY_PROJECT_ENDPOINT=$endpoint and FOUNDRY_AGENT=$AgentName on the stream processor."

@@ -32,8 +32,8 @@ Each script folder has a `.env.example` listing the values its scripts expect. C
 
 | File | Keys |
 |---|---|
-| `foundry/.env.example` | `SubscriptionId`, `ResourceGroup`, `FoundryAccount`, `FoundryProject`, `OrgUrl`, `AgentName`, `ConnectionName` |
-| `infra/.env.example` | `ResourceGroup`, `ContainerAppsEnv`, `AcrName`, `AcsName`, `FoundryAccount`, `FoundryProject`, `AgentName`, `RepObjectIds`, `CallControllerUrl`, `BotName`, `EventSubscriptionName` |
+| `foundry/.env.example` | `SubscriptionId`, `ResourceGroup`, `FoundryAccount`, `FoundryProject`, `OrgUrl`, `ConnectionName` |
+| `infra/.env.example` | `ResourceGroup`, `ContainerAppsEnv`, `AcrName`, `AcsName`, `FoundryAccount`, `FoundryProject`, `RepObjectIds`, `AppUrl`, `BotName`, `EventSubscriptionName` |
 | `teams/.env.example` | `TenantId`, `BotAppId`, `AcsImmutableId`, `AcsHost`, `ResourceAccountUpn`, `PhoneNumber`, `RepObjectIds` |
 | `dataverse/.env.example` | `OrgUrl` |
 
