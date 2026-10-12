@@ -24,6 +24,10 @@ Caller ─► AI receptionist ─(on request)─► Human rep joins the same cal
 - [Consume the Dataverse MCP server in Microsoft Foundry](https://techcommunity.microsoft.com/blog/azure-ai-foundry-blog/consume-dataverse-mcp-server-in-microsoft-foundry-bringing-business-data-to-ai-a/4548218)
 - [Voice agent telephony channels: configure transfer to a person](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/voice-agent-telephony-channels?tabs=portal#configure-transfer-to-a-person)
 
+## Architecture
+
+![System context: caller, ACS, VoiceIntake container app, Foundry agents, Dataverse](docs/images/architecture.png)
+
 ## Why it is different
 
 - **Draft, then human submit.** Agents never create tickets. Trust is built into the design.
