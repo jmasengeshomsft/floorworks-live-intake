@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>FloorWorks architecture - voice-agent mode</title>
+<style>
+body{font-family:Segoe UI,Arial,sans-serif;background:#f4f6f8;margin:0;padding:24px;color:#1b2733}
+h1{font-size:20px;margin:0 0 4px} .sub{color:#5b6b79;margin-bottom:20px;font-size:13px}
+.flow{display:flex;align-items:stretch;gap:10px;margin-bottom:18px}
+.phase{flex:1;background:#fff;border-radius:10px;padding:14px;box-shadow:0 1px 3px #0002;border-top:5px solid #888}
+.p1{border-color:#2a7de1}.p2{border-color:#2e9e5b}.h{border-color:#e08a00}.f{border-color:#7b4fd1}
+.phase h2{font-size:14px;margin:0 0 10px;text-transform:uppercase;letter-spacing:.5px}
+.box{background:#eef3f9;border:1px solid #c9d6e4;border-radius:6px;padding:7px 9px;margin:6px 0;font-size:12.5px}
+.new{background:#fff3cd;border-color:#e0b100;font-weight:600}
+.off{background:#eee;color:#888;text-decoration:line-through}
+.arrow{align-self:center;font-size:26px;color:#8a99a8}
+.row{display:flex;gap:10px}.row .phase{flex:1}
+.legend{font-size:12px;color:#5b6b79;margin-top:10px}
+</style></head><body>
+<h1>FloorWorks Voice Intake - TRANSCRIPTION_MODE=voice-agent</h1>
+<div class="sub">Customer text comes from the voice agent while the receptionist is on the call; Speech STT takes over after the rep joins.</div>
+
+<div class="row" style="margin-bottom:18px">
+  <div class="phase" style="border-color:#555"><h2>Platform</h2>
+    <div class="box">Customer phone (PSTN)</div><div class="box">Teams Phone / TPE</div>
+    <div class="box">ACS call (app-owned)</div><div class="box"><b>VoiceIntake</b> Container App</div>
+  </div>
+  <div class="phase" style="border-color:#555"><h2>Foundry</h2>
+    <div class="box">Voice agent v5 (receptionist)</div><div class="box">Toolbox v3 - Dataverse MCP</div>
+    <div class="box">Note-taker agent v4</div>
+  </div>
+  <div class="phase" style="border-color:#555"><h2>Data and people</h2>
+    <div class="box">Dataverse: draft, customers, equipment, tickets</div>
+    <div class="box">Rep in Teams (audio)</div><div class="box">Rep Console in browser (text)</div>
+  </div>
+</div>
+
+<div class="flow">
+  <div class="phase p1"><h2>1 - Receptionist on call</h2>
+    <div class="box">Customer audio to voice agent</div>
+    <div class="box new">Customer text: voice agent input transcription</div>
+    <div class="box">AI text: voice agent output transcript</div>
+    <div class="box">Equipment lookup via Dataverse MCP</div>
+    <div class="box off">Speech STT for caller</div>
+  </div>
+  <div class="arrow">&#10140;</div>
+  <div class="phase h"><h2>Handoff</h2>
+    <div class="box">transfer_to_rep called</div><div class="box">AI muted</div>
+    <div class="box">Rep added to the call</div><div class="box">Customer STT starts</div>
+  </div>
+  <div class="arrow">&#10140;</div>
+  <div class="phase p2"><h2>2 - Rep on call</h2>
+    <div class="box">Customer audio to Speech STT: [customer]</div>
+    <div class="box">Rep audio to Speech STT: [rep]</div>
+    <div class="box">Voice agent no longer listening</div>
+  </div>
+</div>
+
+<div class="flow">
+  <div class="phase" style="border-color:#555"><h2>Shared by both phases</h2>
+    <div class="box">Transcript (CallState)</div>
+    <div class="box">&#10140; Note-taker &#10140; Draft in Dataverse (rep edits are protected)</div>
+    <div class="box">&#10140; Live transcript in Rep Console</div>
+  </div>
+  <div class="arrow">&#10140;</div>
+  <div class="phase f"><h2>Finish</h2>
+    <div class="box">Rep reviews draft</div><div class="box">Links customer and equipment</div>
+    <div class="box"><b>Submit</b> creates the service ticket (agents never do)</div>
+  </div>
+</div>
+<div class="legend">Yellow = the only change vs acs-stt mode. Set TRANSCRIPTION_MODE=acs-stt to use Speech STT for everyone.</div>
+</body></html>

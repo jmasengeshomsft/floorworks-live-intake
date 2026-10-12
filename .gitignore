@@ -1,0 +1,9 @@
+bin/
+obj/
+.env*
+!.env.example
+*.wav
+*.user
+.vs/
+
+.azure/
