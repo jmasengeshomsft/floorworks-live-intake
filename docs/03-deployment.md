@@ -5,7 +5,6 @@ Teams and licensing.
 
 > **Status of the scripts.** `dataverse/provision-dataverse.ps1` and the Foundry wiring were run end to end. Scripts
 > under `infra/` and `teams/` were consolidated from manual steps and are parameterized rewrites: expect small fixes.
-> `infra/deploy.ps1` builds the **legacy** services; the commands for **VoiceIntake** are in step 5 below.
 
 ## 1 · Prerequisites
 
@@ -65,7 +64,31 @@ subscription**.
 > Without the bot's Teams calling channel Teams rejects the call with SIP 480 / code 10140. If you route the number
 > straight to the resource account, no Auto Attendant greeting plays; the AI receptionist replaces it.
 
-## 5 · Build and deploy VoiceIntake
+## azd quick start
+
+Provisions the registry, Container Apps environment, app and role assignments, then builds and deploys VoiceIntake. It reuses an **existing** ACS resource and Foundry project.
+
+```powershell
+azd auth login
+azd env new <name>
+azd env set AZURE_LOCATION eastus
+azd env set ACS_NAME <acs-resource-in-the-same-rg>
+azd env set FOUNDRY_ACCOUNT_NAME <account>
+azd env set FOUNDRY_PROJECT_NAME <project>
+azd env set FOUNDRY_RESOURCE_GROUP <rg>          # if different from the target RG
+azd env set DATAVERSE_URL https://<org>.crm.dynamics.com
+azd env set REP_TEAMS_OBJECT_IDS <oid1,oid2>
+azd env set REP_KEY <shared-key>
+azd env set ENRICHMENT off                       # on after the Foundry IQ KB is built (foundry/README.md)
+azd env set CREATE_ACS true                       # self-contained: also create ACS (omit ACS_NAME)
+azd env set CREATE_FOUNDRY true                   # self-contained: also create Foundry account + project; then run foundry/create-agents.ps1
+azd env set DEPLOY_SEARCH true                   # Azure AI Search for Foundry IQ (false to reuse your own)
+azd env set RUNNER_PRINCIPAL_ID <your-user-object-id>   # optional: grants you the search roles to build the KB
+azd up
+```
+
+Manual steps azd does not cover: Dataverse schema (`dataverse/provision-dataverse.ps1`), a Dataverse **application user** for the app's managed identity (`azd env get-value APP_PRINCIPAL_ID`), publishing the agents (`foundry/`), the Teams number and the Event Grid `IncomingCall` subscription pointing at `<PUBLIC_BASE_URL>/api/incoming` (see steps 3 and 4). Set `FOUNDRY_PROJECT_ENDPOINT` when running `foundry\publish-draft-flow-agents.ps1`.
+## 5 · Build and deploy VoiceIntake (manual alternative)
 
 ```powershell
 cd src/VoiceIntake
@@ -115,18 +138,6 @@ curl "https://<fqdn>/rep?k=<rep-key>"             # Rep Console HTML
 
 Then follow the [Demo guide](11-demo-guide.md): open the console, dial the number, speak, and confirm a draft appears
 with **no** service ticket created until Submit.
-
-## 7 · Offline test (no phone call)
-
-```powershell
-$env:SPEECH_KEY = '<key>'; $env:SPEECH_REGION = 'eastus'
-$env:FOUNDRY_PROJECT_ENDPOINT = '<endpoint>'; $env:LOCAL_DEV = '1'   # LOCAL_DEV uses your az login
-dotnet run --project src/StreamProcessor
-dotnet run --project src/Simulator -- ws://localhost:5000/ws/test customer=customer.wav rep=rep.wav   # 16 kHz, 16-bit, mono
-curl -N http://localhost:5000/events/test
-```
-
-This exercises the legacy pipeline's STT and extractor with recorded WAVs.
 
 ## Tear-down
 

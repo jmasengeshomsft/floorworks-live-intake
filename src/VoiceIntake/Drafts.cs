@@ -42,7 +42,28 @@ public sealed class DraftStore
         "low" => 0, "medium" or "normal" => 1, "high" => 2, "critical" or "urgent" => 3, _ => 1
     };
 
-    private const string DraftSelect = "bdm_servicerequestdraftid,bdm_name,bdm_callid,bdm_callerphone,bdm_customername,bdm_equipmenttext,bdm_complaint,bdm_priority,bdm_summary,bdm_transcript,bdm_coaching,bdm_status,bdm_submittedby,bdm_submittedon,bdm_contactphone,bdm_assetnumber,bdm_location,bdm_preferredtime,bdm_editedfields,createdon,_bdm_customerid_value,_bdm_equipmentid_value,_bdm_ticketid_value";
+    private static readonly string DraftSelect = "bdm_servicerequestdraftid,bdm_name,bdm_callid,bdm_callerphone,bdm_customername,bdm_equipmenttext,bdm_complaint,bdm_priority,bdm_summary,bdm_transcript,bdm_coaching,bdm_status,bdm_submittedby,bdm_submittedon,bdm_contactphone,bdm_assetnumber,bdm_location,bdm_preferredtime,bdm_editedfields,createdon,_bdm_customerid_value,_bdm_equipmentid_value,_bdm_ticketid_value"
+        + (Extractor.EnrichmentOn ? ",bdm_enrichmentjson" : ""); // column only exists after re-running provision-dataverse.ps1
+
+    // Plain-text rendering of the AI enrichment for the ticket notes.
+    public static string EnrichmentText(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return "";
+        try
+        {
+            var e = JsonNode.Parse(json); if (e is null) return "";
+            var sb = new StringBuilder().AppendLine("AI suggested (Foundry IQ):");
+            if (e["likely_cause"] is JsonNode c) sb.AppendLine($"Likely cause: {c}");
+            if (e["bulletin"] is JsonNode b) sb.AppendLine($"Referenced bulletin: {b}");
+            if (e["parts"] is JsonArray ps && ps.Count > 0)
+                sb.AppendLine("Parts to check: " + string.Join("; ", ps.Select(p => $"{p?["number"]} {p?["name"]}" + (p?["unit_cost"] is JsonNode uc ? $" (${uc})" : ""))));
+            if (e["suggested_priority"] is JsonNode sp) sb.AppendLine($"Suggested priority: {sp}" + (e["priority_reason"] is JsonNode pr ? $" - {pr}" : ""));
+            if (e["diagnostic_steps"] is JsonArray ds) { var i = 1; foreach (var s in ds) sb.AppendLine($"  {i++}. {s}"); }
+            if (e["sources"] is JsonArray src && src.Count > 0) sb.AppendLine("Sources: " + string.Join(", ", src.Select(s => s?.ToString())));
+            return sb.ToString();
+        }
+        catch { return ""; }
+    }
 
     public async Task<JsonNode?> FindDraft(string callId)
     {
@@ -73,13 +94,17 @@ public sealed class DraftStore
             Put("location", "bdm_location", f["location"]?.ToString());
             Put("preferredtime", "bdm_preferredtime", f["preferred_time"]?.ToString());
             Put("complaint", "bdm_complaint", f["complaint"]?.ToString());
+            if (Extractor.EnrichmentOn && result?["enrichment"] is JsonObject enr && enr.Count > 0) body["bdm_enrichmentjson"] = enr.ToJsonString();
             if (!edited.Contains("priority") && f["priority"] is not null) body["bdm_priority"] = PriorityOpt(f["priority"]?.ToString());
             else if (draft is null) body["bdm_priority"] = PriorityOpt(null);
 
             if (draft is null || draft["_bdm_customerid_value"] is null)
             {
-                var cid = await MatchCustomer(state.CallerPhone);
+                var (cid, cname) = await MatchCustomer(state.CallerPhone);
                 if (cid is not null) body["bdm_CustomerId@odata.bind"] = $"/bdm_customers({cid})";
+                if (!edited.Contains("customername") && string.IsNullOrWhiteSpace(draft?["bdm_customername"]?.ToString())
+                    && string.IsNullOrWhiteSpace(body["bdm_customername"]?.ToString()) && !string.IsNullOrWhiteSpace(cname))
+                    body["bdm_customername"] = cname;
             }
             if (draft is null || draft["_bdm_equipmentid_value"] is null)
             {
@@ -112,12 +137,12 @@ public sealed class DraftStore
     }
 
     // Exactly one customer on that phone number, otherwise leave it for the rep to choose.
-    public async Task<string?> MatchCustomer(string phone)
+    public async Task<(string? Id, string? Name)> MatchCustomer(string phone)
     {
-        var d = Digits(phone); if (d.Length > 10) d = d[^10..]; if (d.Length < 7) return null;
-        var r = await Send(HttpMethod.Get, $"bdm_customers?$select=bdm_customerid&$filter=contains(bdm_primaryphone,'{d}')&$top=2");
+        var d = Digits(phone); if (d.Length > 10) d = d[^10..]; if (d.Length < 7) return (null, null);
+        var r = await Send(HttpMethod.Get, $"bdm_customers?$select=bdm_customerid,bdm_name&$filter=contains(bdm_primaryphone,'{d}')&$top=2");
         var rows = r?["value"]?.AsArray();
-        return rows?.Count == 1 ? rows[0]!["bdm_customerid"]!.ToString() : null;
+        return rows?.Count == 1 ? (rows[0]!["bdm_customerid"]!.ToString(), rows[0]!["bdm_name"]?.ToString()) : (null, null);
     }
 
     private JsonArray? _custCache; private DateTime _custCacheAt;
@@ -237,12 +262,29 @@ public sealed class DraftStore
     public async Task<JsonNode?> RecentDrafts() =>
         (await Send(HttpMethod.Get, "bdm_servicerequestdrafts?$select=bdm_callid,bdm_name,bdm_callerphone,bdm_customername,bdm_status,createdon&$orderby=createdon desc&$top=20"))?["value"];
 
+    public async Task<JsonNode?> ListDrafts() =>
+        (await Send(HttpMethod.Get, "bdm_servicerequestdrafts?$select=bdm_callid,bdm_name,bdm_callerphone,bdm_customername,bdm_equipmenttext,bdm_complaint,bdm_priority,bdm_status,bdm_submittedby,createdon&$orderby=createdon desc&$top=100"))?["value"];
+
+    public async Task<JsonNode?> ListTickets() =>
+        (await Send(HttpMethod.Get, "bdm_servicetickets?$select=bdm_name,bdm_priority,bdm_status,bdm_openedon,createdon,_bdm_customerid_value,_bdm_equipmentid_value&$orderby=createdon desc&$top=100"))?["value"];
+
+    public async Task<string?> GetTicketName(string id) =>
+        (await Send(HttpMethod.Get, $"bdm_servicetickets({id})?$select=bdm_name"))?["bdm_name"]?.ToString();
+
     public async Task Update(string callId, JsonNode edit)
     {
         var d = await FindDraft(callId) ?? throw new KeyNotFoundException("draft not found");
         if (d["bdm_status"]?.GetValue<int>() != OptBase) throw new InvalidOperationException("draft already submitted");
         var b = new JsonObject();
-        if (edit["customerId"] is JsonNode c) b["bdm_CustomerId@odata.bind"] = $"/bdm_customers({c})";
+        if (edit["customerId"] is JsonNode c)
+        {
+            b["bdm_CustomerId@odata.bind"] = $"/bdm_customers({c})";
+            if (edit["customername"] is null && string.IsNullOrWhiteSpace(d["bdm_customername"]?.ToString()))
+            {
+                var nm = (await GetCustomer(c.ToString()))?["bdm_name"]?.ToString();
+                if (!string.IsNullOrWhiteSpace(nm)) b["bdm_customername"] = nm;
+            }
+        }
         if (edit["equipmentId"] is JsonNode e) b["bdm_EquipmentId@odata.bind"] = $"/bdm_equipments({e})";
         if (edit["complaint"] is JsonNode m) b["bdm_complaint"] = m.ToString();
         if (edit["priority"] is JsonNode p) b["bdm_priority"] = PriorityOpt(p.ToString());
@@ -274,10 +316,11 @@ public sealed class DraftStore
                 .AppendLine($"Contact phone: {d["bdm_contactphone"] ?? d["bdm_callerphone"]}").AppendLine($"Location: {d["bdm_location"]}")
                 .AppendLine($"Preferred time: {d["bdm_preferredtime"]}")
                 .AppendLine().AppendLine(d["bdm_complaint"]?.ToString())
-                .AppendLine().AppendLine("Call summary:").AppendLine(d["bdm_summary"]?.ToString()).ToString();
+                .AppendLine().AppendLine("Call summary:").AppendLine(d["bdm_summary"]?.ToString());
+            if (Extractor.EnrichmentOn) { var et = EnrichmentText(d["bdm_enrichmentjson"]?.ToString()); if (et != "") desc.AppendLine().Append(et); }
             var ticket = new JsonObject
             {
-                ["bdm_name"] = title, ["bdm_description"] = desc,
+                ["bdm_name"] = title, ["bdm_description"] = desc.ToString(),
                 ["bdm_priority"] = d["bdm_priority"]?.GetValue<int>() ?? OptBase + 1,
                 ["bdm_status"] = OptBase, ["bdm_openedon"] = DateTime.UtcNow.ToString("o"),
                 ["bdm_EquipmentId@odata.bind"] = $"/bdm_equipments({eqId})",

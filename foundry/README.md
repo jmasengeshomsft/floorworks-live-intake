@@ -7,6 +7,12 @@
 | `instructions.md` | Prompt of the **legacy** extractor agent (`floorworks-intake-extractor`) from the first pipeline |
 | `publish-draft-flow-agents.ps1` | Publishes new versions of the note-taker and the receptionist voice agent for the draft-then-submit flow |
 | `toolbox.sample.json` | Example toolbox definition exposing the Dataverse MCP server to the voice agent |
+| `FloorWorks.FoundryIq.csproj`, `Program.cs`, `Corpus.cs` | .NET CLI that builds the Foundry IQ knowledge base (`dotnet run -- preflight\|all\|ask "..."`) |
+| `notetaker-enrichment.md` | Extra note-taker instructions appended by the publish script when `$env:ENRICHMENT='on'` |
+
+## Foundry IQ CLI
+
+Builds the synthetic FloorWorks corpus (66 chunks from the Dataverse seed data) into index `floorworks-kb-index`, knowledge source `floorworks-kb-source`, KB `floorworks-kb`, and project connection `floorworks-kb` on your Azure AI Search service (`azd` provisions one; read it with `azd env get-value SEARCH_SERVICE`). Required env vars: `SEARCH_SERVICE`, `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`, `FOUNDRY_ACCOUNT`, `FOUNDRY_PROJECT`. The Foundry account needs `text-embedding-3-small` and `gpt-4.1` deployments. Run from this folder after `az login`: `dotnet run -- preflight`, `dotnet run -- all`, `dotnet run -- ask "Hydraulic Press H1 valve leaking"`. RBAC: project MI needs *Search Index Data Reader* (azd grants it); runner needs *Search Service Contributor* + *Search Index Data Contributor* (azd grants them if `RUNNER_PRINCIPAL_ID` is set). The search service's managed identity also needs *Cognitive Services OpenAI User* on the AI account (embedding vectorizer and KB model). The KB uses a chat model (`KB_LLM_DEPLOYMENT`, default `gpt-4.1`) because the Foundry MCP tool requests a reasoning effort above minimal. Verified against the live service (preview APIs).
 
 ## Typical flows
 

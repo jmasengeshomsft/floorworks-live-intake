@@ -1,0 +1,23 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environmentName": { "value": "${AZURE_ENV_NAME}" },
+    "location": { "value": "${AZURE_LOCATION}" },
+    "createAcs": { "value": "${CREATE_ACS=false}" },
+    "createFoundry": { "value": "${CREATE_FOUNDRY=false}" },
+    "existingAcsName": { "value": "${ACS_NAME=}" },
+    "existingFoundryAccountName": { "value": "${FOUNDRY_ACCOUNT_NAME=}" },
+    "existingFoundryResourceGroup": { "value": "${FOUNDRY_RESOURCE_GROUP=${AZURE_RESOURCE_GROUP}}" },
+    "existingFoundryProjectName": { "value": "${FOUNDRY_PROJECT_NAME=firstProject}" },
+    "dataverseUrl": { "value": "${DATAVERSE_URL}" },
+    "repTeamsObjectIds": { "value": "${REP_TEAMS_OBJECT_IDS}" },
+    "repKey": { "value": "${REP_KEY}" },
+    "speechRegion": { "value": "${SPEECH_REGION=eastus}" },
+    "enrichment": { "value": "${ENRICHMENT=off}" },
+    "afterHours": { "value": "${AFTER_HOURS=off}" },
+    "deploySearch": { "value": "${DEPLOY_SEARCH=true}" },
+    "runnerPrincipalId": { "value": "${RUNNER_PRINCIPAL_ID=}" },
+    "ringback": { "value": "${RINGBACK=on}" }
+  }
+}

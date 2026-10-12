@@ -5,3 +5,5 @@ obj/
 *.wav
 *.user
 .vs/
+
+.azure/

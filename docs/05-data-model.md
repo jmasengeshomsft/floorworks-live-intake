@@ -101,6 +101,7 @@ The live, persisted draft the agents build and the rep reviews. One row per call
 | `bdm_status` | Choice | **Draft**, Submitted, Discarded |
 | `bdm_submittedby`, `bdm_submittedon` | Text, Date | Filled on submit |
 | `bdm_editedfields` | Text 300 | Comma list of rep-edited fields; agents will not overwrite these |
+| `bdm_enrichmentjson` | Memo | Foundry IQ "AI suggested" block (likely cause, bulletin, parts, priority, steps, sources). Written only when `ENRICHMENT=on`; separate from caller-said fields |
 | `bdm_customerid` | Lookup → Customer | |
 | `bdm_equipmentid` | Lookup → Equipment | |
 | `bdm_ticketid` | Lookup → Service Ticket | Set on submit |

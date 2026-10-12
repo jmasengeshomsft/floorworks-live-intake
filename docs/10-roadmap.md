@@ -40,12 +40,13 @@ Ordered by value for a customer pilot.
 11. **Call summary and handoff note** posted to the rep's Teams chat when a transfer begins.
 12. **Multiple reps and queues** with skills-based routing instead of a fixed list.
 13. **Analytics.** Dashboard of call volume, transfer rate, time to submit, field-edit rate (a proxy for AI accuracy).
+14. **Foundry IQ enrichment (built, behind `ENRICHMENT=on`).** Note-taker-only AI suggested card (cause, bulletin, parts, priority, steps, citations). Next: extend enrichment to the voice agent (deliberately omitted for now) and ground on real manuals/bulletins instead of the synthetic corpus.
 
 ### Later (scale and platform)
 14. **Power Apps front end** on the draft table (see [Rep console](07-rep-console.md)).
 15. **Durable state.** Move call state to a store so the app can run multiple replicas and survive restarts.
-16. **Infrastructure as code.** Bicep or azd for the whole stack; today only the legacy services have a deploy script.
-17. **CI/CD and tests.** Unit tests for `Drafts.cs` merge rules; a recorded-call regression suite using the Simulator.
+16. **Infrastructure as code.** Bicep or azd for the whole stack; `azd up` covers the stack today; extend it with CI.
+17. **CI/CD and tests.** Unit tests for `Drafts.cs` merge rules; a recorded-call regression suite using recorded WAV replays.
 18. **Multilingual** receptionist and STT.
 19. **Outbound callbacks** and SMS confirmations.
 

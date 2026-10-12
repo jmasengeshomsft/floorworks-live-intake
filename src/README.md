@@ -3,11 +3,8 @@
 | Project | Status | Purpose |
 |---|---|---|
 | [`VoiceIntake`](VoiceIntake) | **Current product** | One .NET 8 app: answers the ACS call, bridges audio to the Foundry voice agent, transcribes each speaker, runs the note-taker, persists the draft, serves the Rep Console and API |
-| [`CallController`](CallController) | Legacy | Answers calls and rings the rep in Teams (first pipeline) |
-| [`StreamProcessor`](StreamProcessor) | Legacy | Receives audio, runs Speech STT and one Foundry extractor agent, publishes SSE |
-| [`Simulator`](Simulator) | Test tool | Replays WAV files as ACS-style audio frames to test the legacy pipeline without a phone call |
 
-`FloorWorksLiveIntake.sln` at the repo root references all projects.
+`FloorWorksLiveIntake.sln` at the repo root references VoiceIntake and the Foundry IQ CLI.
 
 ## VoiceIntake files
 

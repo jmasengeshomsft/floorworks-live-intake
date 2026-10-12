@@ -135,7 +135,7 @@ EnsureTable 'servicerequestdraft' 'Service Request Draft' 'Service Request Draft
   (PickAttr 'status' 'Draft Status' @('Draft', 'Submitted', 'Discarded')), (StrAttr 'submittedby' 'Submitted By' 200),
   (DateAttr 'submittedon' 'Submitted On'),
   (StrAttr 'contactphone' 'Contact Phone' 30), (StrAttr 'assetnumber' 'Asset Number' 100), (StrAttr 'location' 'Location' 200),
-  (StrAttr 'preferredtime' 'Preferred Time' 200), (StrAttr 'editedfields' 'Rep-edited fields' 300))
+  (StrAttr 'preferredtime' 'Preferred Time' 200), (StrAttr 'editedfields' 'Rep-edited fields' 300), (MemoAttr 'enrichmentjson' 'Enrichment (AI suggested)' 100000))
 
 EnsureLookup 'equipment' 'customer' 'CustomerId' 'Customer'
 EnsureLookup 'servicerequestdraft' 'customer' 'CustomerId' 'Customer'

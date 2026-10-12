@@ -38,12 +38,10 @@ operations and troubleshooting, security, roadmap and glossary.
 | Path | Purpose |
 |---|---|
 | [`src/VoiceIntake`](src/README.md) | **The product**: call handling, speech, agents, draft store, Rep Console |
-| `src/CallController`, `src/StreamProcessor`, `src/Simulator` | Earlier two-service pipeline and a WAV replay simulator |
 | [`dataverse/`](dataverse/README.md) | Schema and seed script for the manufacturing data |
 | [`foundry/`](foundry/README.md) | Agent instructions, publishing and Foundry-to-Dataverse wiring |
 | [`infra/`](infra/README.md) | Deployment and Azure telephony setup |
 | [`teams/`](teams/README.md) | Teams number and rep enablement |
-| [`experiments/`](experiments/README.md) | `AudioProbe` diagnostics |
 | [`docs/`](docs/README.md) | All documentation |
 
 ## Quick start
@@ -53,8 +51,7 @@ operations and troubleshooting, security, roadmap and glossary.
 dataverse/provision-dataverse.ps1 -OrgUrl https://<org>.crm.dynamics.com
 # 2. Foundry <-> Dataverse, agents, toolbox     -> foundry/README.md
 # 3. Telephony (bot, Event Grid, Teams number)  -> infra/README.md, teams/README.md
-# 4. App
-az acr build -r <acr> -t voice-intake:v1 src/VoiceIntake       # then create the Container App: docs/03-deployment.md
+# 4. App: azd up (see docs/03-deployment.md#azd-quick-start)
 ```
 
 Then open `https://<app>/rep?k=<rep-key>` and call your number.

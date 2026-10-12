@@ -27,10 +27,17 @@ tr.pick{cursor:pointer}tr.pick:hover,tr.sel{background:#e6f0fa}
 .need{background:#fde7e9;border-left:4px solid #c50f1f;color:#8a0b16;padding:8px;font-size:13px;margin-top:6px;display:none}
 .need.on{display:block}#msg.err{background:#fde7e9;border-left:4px solid #c50f1f;color:#8a0b16;padding:8px;font-size:13px;font-weight:600}
 #msg.ok{background:#dff6dd;border-left:4px solid #107c10;color:#0b5a0b;padding:8px;font-size:13px;font-weight:600}
+#aicard{border:1px solid #b9a6f0;border-left:5px solid #6b4fbb;background:#f6f2ff}#aicard h2{color:#4b2f9e}
+.aitag{background:#6b4fbb;color:#fff;border-radius:10px;padding:1px 8px;font-size:11px;margin-left:6px}
+#aicard ol{margin:4px 0 4px 18px;padding:0;font-size:13px}#aicard .src{font-size:11px;color:#5b4a8a;margin-top:6px}
+#aicard button{background:#6b4fbb;margin-top:6px;margin-right:6px}
 </style></head><body>
-<header><h1>FloorWorks Rep Console &mdash; Teams Call Agent</h1><span id="st" class="chip">no call</span>
+<header><h1>FloorWorks Rep Console &mdash; Teams Call Agent</h1>
+<span class="tabs"><button id="t-call" class="on" onclick="showView('call')">Live call</button><button id="t-drafts" onclick="showView('drafts')">Drafts</button><button id="t-tickets" onclick="showView('tickets')">Service tickets</button></span>
+<span id="st" class="chip">no call</span>
 <select id="calls" style="width:260px"></select></header>
-<main>
+<div id="listview" style="display:none;padding:16px"><div class="card"><h2 id="lt"></h2><div id="lb"></div></div></div>
+<main id="callview">
 <section>
  <div class="card"><h2>Real-time Transcription</h2><div id="tr"></div></div>
  <div class="card" style="margin-top:16px"><h2>Coaching Window</h2><div id="coach">Waiting for the agent&hellip;</div></div>
@@ -58,6 +65,7 @@ tr.pick{cursor:pointer}tr.pick:hover,tr.sel{background:#e6f0fa}
   <div class="row"><input id="q" placeholder="Search by customer's phone, first or last name"><button onclick="search()">Search</button></div>
   <div id="cust"></div></div>
  <div class="card" style="margin-top:16px"><h2>Equipment</h2><div id="p1"></div></div>
+ <div class="card" id="aicard" style="margin-top:16px;display:none"><h2>AI suggested<span class="aitag">Foundry IQ</span></h2><div id="ai"></div></div>
 </section></main>
 <script>
 const P=new URLSearchParams(location.search),K=P.get('k')||'';let call=P.get('call')||'',cur=null,eq=[],editing=false;
@@ -68,12 +76,61 @@ const PR={105730000:'Low',105730001:'Normal',105730002:'High',105730003:'Urgent'
 const F=()=>[...document.querySelectorAll('[data-f]')];
 F().forEach(el=>{el.addEventListener('input',()=>{el.dataset.dirty='1';clearTimeout(el._t);el._t=setTimeout(()=>saveField(el),700)});el.addEventListener('blur',()=>saveField(el))});
 async function saveField(el){if(!el.dataset.dirty||!call)return;delete el.dataset.dirty;try{await api('/draft/'+call,{method:'POST',body:JSON.stringify({[el.dataset.f]:el.value})})}catch(e){document.getElementById('msg').textContent=e.message}}
+let aiCur=null;
+function renderAi(d,sub){const card=document.getElementById('aicard'),box=document.getElementById('ai');
+ const e=d.enrichmentEnabled?d.enrichment:null;aiCur=e&&Object.keys(e).length?e:null;
+ if(!d.enrichmentEnabled||(!aiCur&&!d.enriching)){card.style.display='none';box.innerHTML='';return}
+ card.style.display='';
+ if(!aiCur){box.innerHTML='<div class="muted">Enriching&hellip; looking up manuals, bulletins and parts</div>';return}
+ const e2=aiCur,li=a=>(a||[]).map(x=>`<li>${esc(x)}</li>`).join('');
+ const parts=(e2.parts||[]).map(p=>`${esc(p.number)} ${esc(p.name)}${p.unit_cost!=null?' ($'+esc(p.unit_cost)+')':''}`).join('; ');
+ box.innerHTML=(d.enriching?'<div class="muted">Updating&hellip;</div>':'')+
+  `<div class="kv"><b>Likely cause</b><span>${esc(e2.likely_cause)}</span>`+
+  (e2.bulletin?`<b>Bulletin</b><span>${esc(e2.bulletin)}</span>`:'')+
+  (parts?`<b>Parts to check</b><span>${parts}</span>`:'')+
+  (e2.suggested_priority?`<b>Suggested priority</b><span>${esc(e2.suggested_priority)}${e2.priority_reason?' &mdash; '+esc(e2.priority_reason):''}</span>`:'')+`</div>`+
+  ((e2.diagnostic_steps||[]).length?`<div style="margin-top:6px;font-size:13px"><b>Diagnostic steps</b></div><ol>${li(e2.diagnostic_steps)}</ol>`:'')+
+  (sub?'':'<button onclick="applyAi()">Apply priority &amp; parts</button><span class="muted">Copies into the form; you still press Submit.</span>')+
+  ((e2.sources||[]).length?`<div class="src">Sources: ${(e2.sources||[]).map(s=>esc(String(s).replace(/\u3010[^\u3011]*\u3011/g,'').trim())).join(' &middot; ')}</div>`:'')}
+function applyAi(){const e=aiCur;if(!e||!call)return;
+ const pr=document.getElementById('prio'),want=(e.suggested_priority||'').toString();
+ const opt=[...pr.options].find(o=>o.value.toLowerCase()===want.toLowerCase());
+ if(opt&&pr.value!==opt.value){pr.value=opt.value;pr.dataset.dirty='1';saveField(pr)}
+ const parts=(e.parts||[]).map(p=>p.number+' '+p.name).join(', ');
+ const c=document.querySelector('[data-f=complaint]');
+ if(parts&&!c.value.includes('Suggested parts to check')){c.value=(c.value?c.value+'\n':'')+'Suggested parts to check: '+parts;c.dataset.dirty='1';saveField(c)}}
 async function loadCalls(){const c=await api('/calls');const s=document.getElementById('calls');
  const ids=[...new Set([...(c.live||[]),...(c.recent||[]).map(x=>x.bdm_callid)])];
  s.innerHTML=ids.map(i=>`<option value="${i}" ${i==call?'selected':''}>${i}${(c.live||[]).includes(i)?' (live)':''}</option>`).join('');
- if(!call&&ids.length){call=ids[0];}s.onchange=()=>{call=s.value;cur=null;refresh()}}
-async function refresh(){if(!call||editing)return;
+ if(!call&&ids.length){call=ids[0];}
+ else if((c.live||[]).length&&!(c.live||[]).includes(call)&&!window._pinned){selectCall(c.live[0]);return}
+ s.onchange=()=>{window._pinned=true;selectCall(s.value)}}
+function selectCall(id){call=id;cur=null;eq=[];editing=false;
+ const m=document.getElementById('msg');m.textContent='';m.className='muted';
+ document.getElementById('q').value='';
+ for(const el of F()){delete el.dataset.dirty;el.value=''}
+ document.getElementById('cust').innerHTML='';document.getElementById('p1').innerHTML='';
+ aiCur=null;document.getElementById('aicard').style.display='none';document.getElementById('ai').innerHTML='';
+ document.getElementById('tr').innerHTML='';document.getElementById('wr').textContent='(created on submit)';
+ document.getElementById('calls').value=id;showView('call');refresh()}
+let view='call';
+function showView(v){view=v;
+ document.getElementById('callview').style.display=v==='call'?'':'none';
+ document.getElementById('listview').style.display=v==='call'?'none':'';
+ for(const k of['call','drafts','tickets'])document.getElementById('t-'+k).className=k===v?'on':'';
+ if(v!=='call')loadList()}
+const DS={105730000:'Draft',105730001:'Submitted'};
+const fmt=s=>s?new Date(s).toLocaleString():'';
+async function loadList(){const lb=document.getElementById('lb'),lt=document.getElementById('lt');
+ try{
+ if(view==='drafts'){const r=await api('/drafts')||[];lt.textContent='Drafts (call intakes, incl. after-hours) \u2014 click to open';
+  lb.innerHTML='<table><tr><th>Received</th><th>Caller</th><th>Customer</th><th>Equipment</th><th>Issue</th><th>Priority</th><th>Status</th><th>Call</th></tr>'+r.map(x=>`<tr class="pick" onclick="selectCall('${esc(x.bdm_callid)}')"><td>${esc(fmt(x.createdon))}</td><td>${esc(x.bdm_callerphone)}</td><td>${esc(x.bdm_customername)}</td><td>${esc(x.bdm_equipmenttext)}</td><td>${esc((x.bdm_complaint||'').slice(0,80))}</td><td>${esc(PR[x.bdm_priority]||'')}</td><td>${esc(DS[x.bdm_status]||'')}${x.bdm_submittedby?' by '+esc(x.bdm_submittedby):''}</td><td>${esc((x.bdm_callid||'').slice(0,8))}</td></tr>`).join('')+'</table>'}
+ else{const r=await api('/tickets')||[];lt.textContent='Service tickets';const fv=(x,k)=>x[k+'@OData.Community.Display.V1.FormattedValue']||'';
+  lb.innerHTML='<table><tr><th>Ticket</th><th>Customer</th><th>Equipment</th><th>Priority</th><th>Status</th><th>Opened</th></tr>'+r.map(x=>`<tr><td>${esc(x.bdm_name)}</td><td>${esc(fv(x,'_bdm_customerid_value'))}</td><td>${esc(fv(x,'_bdm_equipmentid_value'))}</td><td>${esc(fv(x,'bdm_priority')||PR[x.bdm_priority])}</td><td>${esc(fv(x,'bdm_status'))}</td><td>${esc(fmt(x.bdm_openedon||x.createdon))}</td></tr>`).join('')+'</table>'}
+ }catch(e){lb.textContent='Failed to load: '+e.message}}
+async function refresh(){if(!call||editing)return;const my=call;
  let d;try{d=await api('/draft/'+call)}catch(e){return}
+ if(my!==call)return;
  const dr=d.draft,sub=dr&&dr.bdm_status==105730001;cur=d;
  const st=document.getElementById('st');st.textContent=sub?'Submitted':d.live?'Live':'Call ended';st.className='chip '+(sub?'sub':d.live?'live':'');
  const lines=(d.transcript||(dr?.bdm_transcript||'').split('\n').filter(Boolean).map(l=>{const m=l.match(/^\[(.*?)\] (.*)$/);return m?{speaker:m[1],text:m[2]}:{speaker:'',text:l}}));
@@ -85,6 +142,8 @@ async function refresh(){if(!call||editing)return;
  else showCands(d.candidates||[]);
  if(d.customer){const id=d.customer.bdm_customerid;if(!eq.length||eq.cid!==id){eq=await api('/equipment?customerId='+id);if(!eq.length)eq=await api('/equipment');eq.cid=id}}
  else if(!eq.length||eq.cid!=='all'){eq=await api('/equipment');eq.cid='all'}
+ if(my!==call)return;
+ renderAi(d,sub);
  const sel=dr?._bdm_equipmentid_value;
  document.getElementById('p1').innerHTML=(dr?.bdm_equipmenttext?`<div class="muted">Heard: ${esc(dr.bdm_equipmenttext)}</div>`:'')+
   `<table><tr><th>Asset #</th><th>Equipment</th><th>Make</th></tr>`+eq.map(e=>`<tr class="pick ${e.bdm_equipmentid==sel?'sel':''}" onclick="pickEq('${e.bdm_equipmentid}')"><td>${esc(e.bdm_assetnumber)}</td><td>${esc(e.bdm_name)}</td><td>${esc(e.bdm_manufacturer)}</td></tr>`).join('')+`</table>`;
@@ -94,8 +153,10 @@ async function refresh(){if(!call||editing)return;
   el.disabled=!!sub||!dr}
  document.getElementById('links').textContent=(d.customer?'Customer: '+d.customer.bdm_name+'. ':'No customer linked. ')+(sel?'Equipment linked.':'No equipment linked.');
  document.getElementById('wr').textContent=sub?(dr.bdm_submittedby?'Submitted by '+dr.bdm_submittedby:'Submitted'):'(created on submit)';
- const need=[];if(!d.customer)need.push('a customer (search below, or create one from this call)');if(!sel)need.push('equipment (pick one below)');
+ const need=[];const m0=document.getElementById('msg');if(!d.customer)need.push('a customer (search below, or create one from this call)');if(!sel)need.push('equipment (pick one below)');
  const nb=document.getElementById('need');nb.className='need'+(!sub&&dr&&need.length?' on':'');nb.textContent=need.length?'Before you can submit, link '+need.join(' and ')+'.':'';
+ if(sub&&d.ticket){m0.className='ok';m0.textContent='Service ticket created: '+d.ticket}
+ else if(!sub&&m0.className==='ok'){m0.className='muted';m0.textContent=''}
  document.getElementById('sub').disabled=!!sub||!dr||need.length>0;}
 function showCands(c){const cu=document.getElementById('cust');
  const mk='<div class="row"><button onclick="createCust()">Create customer from this call</button></div><div class="muted">Uses the customer name and contact phone in the form.</div>';

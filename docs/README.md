@@ -16,19 +16,16 @@ Start here. Each section stands alone; read them in order for the full story, or
 | 10 | [Roadmap & known limits](10-roadmap.md) | know what is not done yet and what to build next |
 | 11 | [Demo guide](11-demo-guide.md) | run a clean demo, including a script and a recovery plan |
 | — | [Glossary](glossary.md) | decode the acronyms (ACS, TPE, MCP, ...) |
-| — | [Legacy pipeline](legacy-pipeline.md) | read the original two-service design and its offline simulator |
 
 ## Repo map
 
 | Folder | What lives there | Section README |
 |---|---|---|
 | `src/VoiceIntake` | **The product.** One app that owns the call, the speech-to-text, the agents and the rep console | [src/README.md](../src/README.md) |
-| `src/CallController`, `src/StreamProcessor`, `src/Simulator` | The earlier two-service pipeline (rep answers, AI listens). Kept for reference and offline testing | [src/README.md](../src/README.md) |
 | `dataverse/` | Idempotent schema and seed script for the manufacturing data | [dataverse/README.md](../dataverse/README.md) |
 | `foundry/` | Agent instructions, publishing and Foundry-to-Dataverse wiring | [foundry/README.md](../foundry/README.md) |
 | `infra/` | Container Apps deployment, Event Grid and bot setup | [infra/README.md](../infra/README.md) |
 | `teams/` | Teams resource account, phone number and rep enablement | [teams/README.md](../teams/README.md) |
-| `experiments/` | `AudioProbe`: diagnostic app used to learn ACS audio behavior | [experiments/README.md](../experiments/README.md) |
 
 ## Conventions used in these docs
 

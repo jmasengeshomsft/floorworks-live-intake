@@ -59,6 +59,10 @@ using the `realtime` subprotocol and the `foundry-features: VoiceAgents=V1Previe
 
 When it runs: after each recognized utterance (extract) and once more after the call ends (finalize). Only one extraction runs per call at a time, so notes never regress from overlapping runs.
 
+### Optional enrichment (Foundry IQ)
+
+With `ENRICHMENT=on` the note-taker also gets the `floorworks-kb` MCP tool (`knowledge_base_retrieve`, via project connection `floorworks-kb`; instructions from `foundry/notetaker-enrichment.md`). It returns a separate `enrichment` object (likely cause, bulletin, parts with unit cost, suggested priority and reason, diagnostic steps, sources) that never changes `fields`. Publish with `$env:ENRICHMENT='on'; foundry\publish-draft-flow-agents.ps1`. The knowledge base is built by the CLI in `foundry/` (see `foundry/README.md`). The voice agent has no enrichment.
+
 ## Toolbox `floorworks-dataverse`
 
 A Foundry **toolbox** bundles tools for voice agents. This one exposes the Dataverse MCP server:

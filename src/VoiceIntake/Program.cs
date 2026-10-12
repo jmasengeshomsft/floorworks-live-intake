@@ -27,6 +27,7 @@ var client = new CallAutomationClient(Cfg("ACS_CONNECTION_STRING"));
 var publicBase = Cfg("PUBLIC_BASE_URL").TrimEnd('/');
 var wsBase = publicBase.Replace("https://", "wss://");
 var repIds = Opt("REP_TEAMS_OBJECT_IDS", "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+var ringback = !string.Equals(Opt("RINGBACK", "on"), "off", StringComparison.OrdinalIgnoreCase);
 var foundryEndpoint = Cfg("FOUNDRY_PROJECT_ENDPOINT").TrimEnd('/');
 var voiceAgentName = Opt("VOICE_AGENT_NAME", "floorworks-voice-agent-app");
 var speechKey = Cfg("SPEECH_KEY");
@@ -34,7 +35,7 @@ var speechRegion = Opt("SPEECH_REGION", "eastus");
 // acs-stt (default): Speech STT for every speaker. voice-agent: caller text from the voice agent until handoff.
 var transcriptionMode = Opt("TRANSCRIPTION_MODE", "acs-stt").ToLowerInvariant();
 var extractor = new Extractor(foundryEndpoint, Opt("NOTETAKER_AGENT", "floorworks-notetaker"));
-var drafts = new DraftStore(Opt("DATAVERSE_URL", "https://floorworks.crm.dynamics.com"));
+var drafts = new DraftStore(Cfg("DATAVERSE_URL"));
 extractor.OnResult = async (st, res) =>
 {
     try { await drafts.SaveNotes(st, res); }
@@ -49,7 +50,7 @@ Channel<string> Hub(string id) => hubs.GetOrAdd(id, _ => Channel.CreateUnbounded
 app.MapGet("/healthz", () => "ok");
 
 // ---- Rep console: live draft for a call; the rep reviews, corrects and submits ----
-bool RepAuthorized(HttpRequest r) => repKey == "" || r.Headers["x-rep-key"] == repKey || r.Query["k"] == repKey;
+bool RepAuthorized(HttpRequest r) => repKey != "" && (r.Headers["x-rep-key"] == repKey || r.Query["k"] == repKey);
 app.MapGet("/rep", (HttpRequest r) => RepAuthorized(r) ? Results.Content(RepUi.Html, "text/html") : Results.Unauthorized());
 
 var rep = app.MapGroup("/api/rep");
@@ -58,10 +59,15 @@ rep.AddEndpointFilter(async (ctx, next) =>
 
 rep.MapGet("/calls", async () => Results.Json(new { live = states.Keys, recent = await drafts.RecentDrafts() }));
 
+rep.MapGet("/drafts", async () => Results.Json(await drafts.ListDrafts()));
+rep.MapGet("/tickets", async () => Results.Json(await drafts.ListTickets()));
+
 rep.MapGet("/draft/{callId}", async (string callId) =>
 {
     var d = await drafts.FindDraft(callId);
     states.TryGetValue(callId, out var st);
+    string? ticket = null;
+    if (d?["_bdm_ticketid_value"]?.ToString() is string tid) ticket = await drafts.GetTicketName(tid);
     JsonNode? customer = null, candidates = null;
     var custId = d?["_bdm_customerid_value"]?.ToString();
     if (custId is not null) customer = await drafts.GetCustomer(custId);
@@ -70,9 +76,13 @@ rep.MapGet("/draft/{callId}", async (string callId) =>
         candidates = await drafts.SuggestCustomers(d?["bdm_customername"]?.ToString(),
             d?["bdm_contactphone"]?.ToString(), d?["bdm_callerphone"]?.ToString() ?? st?.CallerPhone);
     }
+    JsonNode? enrichment = null;
+    var enrichOn = Extractor.EnrichmentOn;
+    try { if (enrichOn && d?["bdm_enrichmentjson"]?.ToString() is { Length: > 0 } ej) enrichment = JsonNode.Parse(ej); } catch { }
     return Results.Json(new
     {
-        callId, live = st is not null, draft = d, customer, candidates,
+        callId, live = st is not null, draft = d, customer, candidates, ticket,
+        enrichmentEnabled = enrichOn, enriching = enrichOn && st?.Enriching == true, enrichment,
         transcript = st is not null ? st.Snapshot().transcript : null
     });
 });
@@ -127,7 +137,7 @@ app.MapPost("/api/incoming", async (HttpRequest req, ILogger<Program> log) =>
             if (from.TryGetProperty("phoneNumber", out var pn) && pn.TryGetProperty("value", out var pv)) phone = pv.GetString() ?? "";
             else if (from.TryGetProperty("rawId", out var rid)) phone = rid.GetString() ?? "";
         }
-        states[callId] = new CallState { CallId = callId, CallerPhone = phone };
+        states[callId] = new CallState { CallId = callId, CallerPhone = phone, AfterHours = AfterHours.IsActive() };
 
         var streaming = new MediaStreamingOptions(MediaStreamingAudioChannel.Unmixed, StreamingTransport.Websocket)
         {
@@ -156,10 +166,10 @@ app.MapPost("/api/callbacks/{callId}", async (string callId, HttpRequest req, IL
     switch (ev)
     {
         case CallConnected c: st.ConnId = c.CallConnectionId; break;
-        case AddParticipantSucceeded: st.Muted = true; st.RepJoined = true; log.LogInformation("[{Id}] rep joined; AI muted", callId); break;
+        case AddParticipantSucceeded: st.Ringing = false; st.Muted = true; st.RepJoined = true; log.LogInformation("[{Id}] rep joined; AI muted", callId); break;
         case AddParticipantFailed f:
             // Rep did not join: let the receptionist keep helping the caller.
-            st.Muted = false; st.TransferStarted = false;
+            st.Ringing = false; st.Muted = false; st.TransferStarted = false;
             log.LogWarning("[{Id}] AddParticipant FAILED {M}", callId, f.ResultInformation?.Message);
             break;
         case MediaStreamingFailed m: log.LogWarning("[{Id}] MediaStreaming FAILED {M}", callId, m.ResultInformation?.Message); break;
@@ -259,7 +269,7 @@ app.Map("/ws/{callId}", async (string callId, HttpContext ctx, ILogger<Program> 
             {
                 type = "message",
                 role = "system",
-                content = new[] { new { type = "input_text", text = $"Call context: Call ID is {state.CallId}. Caller phone is {state.CallerPhone}. When you create or update a service ticket, put 'Call ID: {state.CallId}' and the caller phone in its description." + resumeNote } }
+                content = new[] { new { type = "input_text", text = $"Call context: Call ID is {state.CallId}. Caller phone is {state.CallerPhone}. When you create or update a service ticket, put 'Call ID: {state.CallId}' and the caller phone in its description." + (state.AfterHours ? " AFTER HOURS: " + AfterHours.Note : "") + resumeNote } }
             }
         });
     }
@@ -312,8 +322,15 @@ app.Map("/ws/{callId}", async (string callId, HttpContext ctx, ILogger<Program> 
                     else if (t == "response.output_item.done" && e.TryGetProperty("item", out var it) && it.TryGetProperty("type", out var itt)
                              && itt.GetString() == "function_call" && it.GetProperty("name").GetString() == "transfer_to_rep" && !state.TransferStarted)
                     {
-                        state.TransferStarted = true;
                         var cid = it.GetProperty("call_id").GetString();
+                        if (state.AfterHours)
+                        {
+                            log.LogInformation("[{Id}] transfer_to_rep declined (after hours)", callId);
+                            await SendVl(new { type = "conversation.item.create", item = new { type = "function_call_output", call_id = cid, output = "{\"status\":\"unavailable\",\"reason\":\"after_hours\"}" } });
+                            await SendVl(new { type = "response.create" });
+                            continue;
+                        }
+                        state.TransferStarted = true;
                         state.ResponseDone = new TaskCompletionSource();
                         log.LogInformation("[{Id}] transfer_to_rep requested", callId);
                         await SendVl(new { type = "conversation.item.create", item = new { type = "function_call_output", call_id = cid, output = "{\"status\":\"connecting\"}" } });
@@ -325,6 +342,30 @@ app.Map("/ws/{callId}", async (string callId, HttpContext ctx, ILogger<Program> 
                                 await Task.WhenAny(state.ResponseDone.Task, Task.Delay(10000));
                                 await Task.Delay(1500);
                                 state.Muted = true;
+                                if (ringback)
+                                {
+                                    state.Ringing = true;
+                                    _ = Task.Run(async () =>
+                                    {
+                                        try
+                                        {
+                                            var until = DateTime.UtcNow.AddSeconds(45);
+                                            while (state.Ringing && DateTime.UtcNow < until)
+                                            {
+                                                foreach (var frame in Audio.RingCycle())
+                                                {
+                                                    if (!state.Ringing) break;
+                                                    if (frame is not null)
+                                                        await SendAcs(JsonSerializer.Serialize(new { kind = "AudioData", audioData = new { data = Convert.ToBase64String(frame) }, stopAudio = (string?)null }));
+                                                    await Task.Delay(200);
+                                                }
+                                            }
+                                            state.Ringing = false;
+                                            await SendAcs("{\"kind\":\"StopAudio\",\"audioData\":null,\"stopAudio\":{}}");
+                                        }
+                                        catch { state.Ringing = false; }
+                                    });
+                                }
                                 var conn = client.GetCallConnection(state.ConnId);
                                 foreach (var id in repIds)
                                 {
@@ -334,7 +375,7 @@ app.Map("/ws/{callId}", async (string callId, HttpContext ctx, ILogger<Program> 
                             }
                             catch (Exception ex)
                             {
-                                state.Muted = false; state.TransferStarted = false;
+                                state.Ringing = false; state.Muted = false; state.TransferStarted = false;
                                 log.LogError("[{Id}] transfer ERROR {M}", callId, ex.Message);
                             }
                         });
@@ -409,6 +450,25 @@ app.Run();
 
 static class Audio
 {
+    // US ringback (440+480 Hz): 2 s tone then 4 s silence, as 200 ms PCM16 24 kHz frames (null = silence).
+    public static List<byte[]?> RingCycle()
+    {
+        var frames = new List<byte[]?>();
+        for (int f = 0; f < 30; f++)
+        {
+            if (f >= 10) { frames.Add(null); continue; }
+            var b = new byte[4800 * 2];
+            for (int i = 0; i < 4800; i++)
+            {
+                double t = (f * 4800 + i) / 24000.0;
+                var v = (short)(5500 * (Math.Sin(2 * Math.PI * 440 * t) + Math.Sin(2 * Math.PI * 480 * t)));
+                b[i * 2] = (byte)(v & 0xff); b[i * 2 + 1] = (byte)(v >> 8);
+            }
+            frames.Add(b);
+        }
+        return frames;
+    }
+
     // The voice agent expects stereo: channel 0 = caller mic, channel 1 = echo reference (what we just played to the caller).
     public static byte[] Interleave(byte[] mic, byte[] reference)
     {

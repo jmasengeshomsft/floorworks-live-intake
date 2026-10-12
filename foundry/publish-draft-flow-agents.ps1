@@ -1,6 +1,7 @@
 # Publishes new versions of the note-taker and the voice agent for the draft-then-submit flow.
 $ErrorActionPreference = 'Stop'
-$ep = 'https://ai-foundry-demo-jm.services.ai.azure.com/api/projects/firstProject'
+$ep = $env:FOUNDRY_PROJECT_ENDPOINT # https://<account>.services.ai.azure.com/api/projects/<project>
+if (-not $ep) { throw 'Set FOUNDRY_PROJECT_ENDPOINT' }
 $t = az account get-access-token --resource https://ai.azure.com --query accessToken -o tsv
 $h = @('-H', "Authorization: Bearer $t", '-H', 'Content-Type: application/json', '-H', 'Foundry-Features: VoiceAgents=V1Preview')
 
@@ -15,7 +16,18 @@ function Publish($name, $mutate) {
   "$name -> v$($r.version)"
 }
 
-if ($args[0] -ne 'voice-only') { Publish 'floorworks-notetaker' { param($d) $d.instructions = Get-Content (Join-Path $PSScriptRoot 'notetaker-instructions.md') -Raw } }
+if ($args[0] -ne 'voice-only') { Publish 'floorworks-notetaker' { param($d)
+  $ins = Get-Content (Join-Path $PSScriptRoot 'notetaker-instructions.md') -Raw
+  if ($env:ENRICHMENT -eq 'on') {
+    # Foundry IQ: note-taker only. The voice agent is never given the KB tool.
+    $ins += Get-Content (Join-Path $PSScriptRoot 'notetaker-enrichment.md') -Raw
+    if (-not $env:SEARCH_SERVICE) { throw 'ENRICHMENT=on requires SEARCH_SERVICE (azd output)' }
+    $kb = @{ type = 'mcp'; server_label = 'floorworks-kb'
+      server_url = "https://$($env:SEARCH_SERVICE).search.windows.net/knowledgebases/floorworks-kb/mcp?api-version=2026-05-01-preview"
+      project_connection_id = 'floorworks-kb'; allowed_tools = @{ tool_names = @('knowledge_base_retrieve') }; require_approval = 'never' }
+    $d.tools = @(@($d.tools | Where-Object { $_.server_label -ne 'floorworks-kb' }) + $kb)
+  }
+  $d.instructions = $ins } }
 Publish 'floorworks-voice-agent-app' {
   param($d)
   $d.instructions = $d.instructions.Replace(

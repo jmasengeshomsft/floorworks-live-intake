@@ -1,5 +1,7 @@
 # 02 · Architecture
 
+> Customer demo visual: [PNG preview](floorworks-live-intake-architecture.png) · [Editable Excalidraw source](floorworks-live-intake-architecture.excalidraw)
+
 ## System context
 
 ```mermaid
@@ -144,9 +146,3 @@ when it is not in that list and the new value is not empty.
 
 > A per-user OAuth connection (`dataverse-mfg`) exists but returns `CONSENT_REQUIRED` for unattended phone calls. Always use
 > the managed-identity connection for agents that run on calls.
-
-## Legacy pipeline
-
-The first version used two services: `CallController` (answer, ring the rep in Teams) and `StreamProcessor` (STT + one
-Foundry extractor agent that listened and filled a form). It is kept in `src/` for reference and for offline testing with
-`Simulator`. `VoiceIntake` supersedes both.
