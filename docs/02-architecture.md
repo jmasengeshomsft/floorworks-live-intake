@@ -4,6 +4,42 @@
 
 ## System context
 
+The same system runs in two modes, chosen per call by `AFTER_HOURS` (see [04 · Configuration](04-configuration.md)). Both share
+every component; the only structural difference is whether a call can be transferred to a rep in Teams.
+
+### After-hours flow (no transfer)
+
+The AI receptionist handles the whole call. `transfer_to_rep` is declined, so no Teams rep is involved; a rep reviews the
+draft later in the console (Drafts tab) and submits it.
+
+```mermaid
+flowchart LR
+    caller([Caller<br/>PSTN phone]) --> teamsno[Teams phone number<br/>resource account]
+    teamsno --> acs[Azure Communication Services<br/>Call Automation]
+    acs -- IncomingCall via Event Grid --> app
+    acs <-- bidirectional audio WebSocket --> app
+    subgraph app[VoiceIntake - Azure Container App]
+      ws[WebSocket bridge]
+      stt[Speech-to-text per speaker]
+      ext[Extractor]
+      store[DraftStore]
+      ui[Rep Console + API]
+    end
+    ws <--> voice[Foundry voice agent<br/>receptionist<br/>told: after hours, no transfer]
+    stt --> speech[Azure Speech]
+    ext --> note[Foundry prompt agent<br/>note-taker]
+    voice -- toolbox --> mcp
+    note -- connection --> mcp[Dataverse MCP server]
+    mcp --> dv[(Dataverse)]
+    store --> dv
+    rep([Rep browser<br/>next business day]) --> ui
+    ui -- "Drafts tab review,<br/>Submit creates ticket" --> dv
+    classDef after fill:#fff4d6,stroke:#d9a400,color:#000
+    class voice,rep after
+```
+
+### Work-hours flow (transfer to a rep)
+
 ```mermaid
 flowchart LR
     caller([Caller<br/>PSTN phone]) --> teamsno[Teams phone number<br/>resource account]
@@ -25,7 +61,9 @@ flowchart LR
     mcp --> dv[(Dataverse)]
     store --> dv
     rep([Rep browser]) --> ui
-    acs -. AddParticipant .-> repteams([Rep in Teams])
+    acs == "AddParticipant (live handoff)" ==> repteams([Rep in Teams<br/>takes the call live])
+    classDef live fill:#dff3e4,stroke:#2e8b57,color:#000
+    class repteams,rep live
 ```
 
 ## Components
@@ -68,6 +106,47 @@ flowchart LR
 | `/api/rep/customers`, `/api/rep/equipment` | GET | Search helpers |
 
 ## Call lifecycle
+
+### After-hours call
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Caller
+    participant A as ACS
+    participant V as VoiceIntake
+    participant R as Voice agent
+    participant N as Note-taker
+    participant D as Dataverse
+    participant P as Rep (console)
+
+    C->>A: Dials the number
+    A->>V: IncomingCall (Event Grid)
+    V->>V: AfterHours.IsActive() = true
+    V->>A: AnswerCall (unmixed audio, WebSocket)
+    A-->>V: Audio frames per participant
+    V->>R: Open realtime session + call context + "AFTER HOURS" note
+    R-->>V: Greeting audio
+    V-->>A: AI audio to caller
+    loop Each recognized utterance
+        V->>V: Speech-to-text (caller / AI)
+        V->>N: Extract (transcript + current notes)
+        N->>D: Read-only lookups via MCP
+        N-->>V: Structured notes JSON
+        V->>D: Upsert draft (skip rep-edited fields)
+    end
+    opt Caller asks for a person
+        R-->>V: transfer_to_rep
+        V-->>R: {"status":"unavailable","reason":"after_hours"}
+        R-->>C: Offers to take details for a callback
+    end
+    C->>A: Hangs up
+    V->>N: Finalize (one last pass)
+    V->>D: Save final draft
+    Note over D,P: Next business day the rep opens the Drafts tab, reviews, and clicks Submit to create the Service Ticket
+```
+
+### Work-hours call
 
 ```mermaid
 sequenceDiagram

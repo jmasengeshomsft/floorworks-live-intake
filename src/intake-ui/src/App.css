@@ -1,0 +1,72 @@
+:root {
+  --bg: #f4f6f8;
+  --card: #fff;
+  --ink: #1b2430;
+  --muted: #6b7684;
+  --line: #e1e6ec;
+  --accent: #0b6bcb;
+  --ai: #6b3fd4;
+  --ai-bg: #f5f0ff;
+  --bad: #c62828;
+  --ok: #2e7d32;
+  --warn: #b26a00;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color: var(--ink);
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); }
+button, input { font: inherit; }
+button {
+  border: 1px solid var(--line); background: var(--card); border-radius: 6px; padding: 6px 12px; cursor: pointer;
+}
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.danger { color: var(--bad); }
+input { border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; min-width: 0; }
+.app { max-width: 1400px; margin: 0 auto; padding: 16px; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+h1 { font-size: 20px; margin: 0; }
+h2 { font-size: 16px; margin: 0; display: inline; margin-right: 8px; }
+h3 { font-size: 13px; margin: 0 0 8px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.conn { display: flex; gap: 8px; align-items: center; }
+.conn input { width: 280px; }
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #aaa; margin: 0 6px; }
+.dot.ok { background: var(--ok); }
+.dot.bad { background: var(--bad); }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 12px 0; }
+.chip { background: #e9eef4; border-radius: 999px; padding: 2px 10px; font-size: 12px; margin-right: 4px; display: inline-block; }
+.chip.warn { background: #fff1d6; color: var(--warn); }
+.layout { display: grid; grid-template-columns: 300px 1fr; gap: 16px; align-items: start; }
+.list-pane, .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; }
+.card { padding: 14px; margin-bottom: 12px; }
+.pane-head { display: flex; justify-content: space-between; align-items: center; padding: 12px; border-bottom: 1px solid var(--line); }
+.pad { padding: 12px; }
+.call-row { display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; padding: 10px 12px; }
+.call-row.sel { background: #eaf3fe; }
+.status { font-size: 11px; font-weight: 600; text-transform: uppercase; border-radius: 4px; padding: 1px 6px; width: fit-content; margin-right: 8px; background: #e9eef4; display: inline-block; }
+.status.active { background: #dff3e1; color: var(--ok); }
+.status.ringing { background: #fff1d6; color: var(--warn); }
+.muted { color: var(--muted); font-size: 13px; }
+.detail-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px; }
+.row { display: flex; gap: 8px; }
+.row input { flex: 1; }
+.grid { display: grid; grid-template-columns: 1.1fr 1fr; gap: 12px; align-items: start; }
+.transcript { max-height: 560px; overflow: auto; }
+.line { display: flex; gap: 10px; padding: 6px 0; font-size: 14px; }
+.line .who { width: 56px; flex-shrink: 0; font-size: 11px; text-transform: uppercase; color: var(--muted); padding-top: 2px; }
+.line.caller .who { color: var(--accent); }
+dl { margin: 0; }
+.kv { display: grid; grid-template-columns: 130px 1fr; gap: 8px; padding: 5px 0; border-bottom: 1px dashed var(--line); font-size: 14px; }
+.kv:last-child { border-bottom: 0; }
+dt { color: var(--muted); }
+dd { margin: 0; word-break: break-word; }
+.list { margin: 0; padding-left: 18px; }
+.card.ai { background: var(--ai-bg); border-color: #d8c9fb; }
+.badge { background: var(--ai); color: #fff; border-radius: 4px; padding: 1px 6px; font-size: 11px; margin-right: 6px; }
+.error { background: #fdecea; color: var(--bad); border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; font-size: 13px; }
+.fn { padding: 6px 0; font-size: 13px; }
+.log { max-height: 260px; overflow: auto; font-size: 12px; margin-top: 8px; }
+.log div { padding: 2px 0; }
+code { font-size: 12px; color: #444; }
+.empty { display: grid; place-items: center; min-height: 300px; }
+@media (max-width: 900px) { .layout, .grid { grid-template-columns: 1fr; } .conn input { width: 160px; } }
