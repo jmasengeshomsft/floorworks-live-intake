@@ -1,11 +1,10 @@
 """API-key auth for /v1. Keys via X-Api-Key header, Authorization: Bearer, or ?key= (for SSE in browsers)."""
 from __future__ import annotations
 
-import hmac
-
 from fastapi import HTTPException, Request
 
 from .config import Settings
+from .security import safe_equal
 
 
 def make_dependency(settings: Settings):
@@ -17,7 +16,7 @@ def make_dependency(settings: Settings):
             or request.headers.get("authorization", "").removeprefix("Bearer ").strip()
             or request.query_params.get("key", "")
         )
-        if not any(hmac.compare_digest(supplied, k) for k in settings.api_keys):
+        if not any(safe_equal(supplied, k) for k in settings.api_keys):
             raise HTTPException(status_code=401, detail="invalid or missing API key")
 
     return require_key

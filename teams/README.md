@@ -11,6 +11,10 @@ It handles:
 
 Inputs come from `.env.example`: `TenantId`, `BotAppId`, `AcsImmutableId`, `AcsHost`, `ResourceAccountUpn`, `PhoneNumber`, `RepObjectIds`.
 
+## Preflight
+
+Run `.\preflight-teams.ps1` first (read-only). It validates licenses, number type/assignment, resource account and reps, and exits 1 on any FAIL. See [runbook Step 0](../docs/15-telephony-binding-runbook.md).
+
 ## Rep checklist
 
 - Teams Phone license and Enterprise Voice enabled

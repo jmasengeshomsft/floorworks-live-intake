@@ -4,3 +4,4 @@ websockets>=13
 httpx>=0.27
 azure-identity>=1.17
 azure-communication-callautomation>=1.4.0
+PyJWT[crypto]>=2.8

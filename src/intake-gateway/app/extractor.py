@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from typing import Any
 
@@ -72,6 +73,28 @@ def parse_json_lenient(text: str) -> dict:
         raise ValueError(f"unparseable extractor JSON: {e}") from e
 
 
+_CITE = re.compile(r"【[^】]*】")
+_PRIORITY = {"normal": "Medium", "medium": "Medium", "standard": "Medium", "low": "Low", "minor": "Low",
+             "high": "High", "urgent": "Urgent", "critical": "Urgent", "emergency": "Urgent"}
+
+
+def _clean(text: str) -> str:
+    return re.sub(r"\s{2,}", " ", _CITE.sub("", text)).strip()
+
+
+def normalize_enrichment(enr: dict) -> dict:
+    """Align enrichment with ticket vocabulary and strip raw citation markers."""
+    out = dict(enr)
+    pr = out.get("suggested_priority")
+    if isinstance(pr, str) and pr.strip():
+        out["suggested_priority"] = _PRIORITY.get(pr.strip().lower(), pr.strip())
+    srcs = out.get("sources")
+    if isinstance(srcs, list):
+        cleaned = [_clean(x) if isinstance(x, str) else x for x in srcs]
+        out["sources"] = [x for x in cleaned if x]
+    return out
+
+
 class Extractor:
     def __init__(self, settings: Settings, hub: EventHub, tokens: TokenSource | None = None):
         self.s = settings
@@ -98,7 +121,8 @@ class Extractor:
             return await self._invoke(payload, timeout_s)
         except (ValueError, httpx.TransportError) as e:
             log.info("[%s] extractor retry after %s", payload.get("call_id"), type(e).__name__)
-            return await self._invoke(payload, timeout_s)
+            # a timeout means the agent is slow, so give the retry more time
+            return await self._invoke(payload, timeout_s * 2 if isinstance(e, httpx.TimeoutException) else timeout_s)
 
     def build_payload(self, st: CallState, mode: str, enrich: bool) -> dict:
         p: dict[str, Any] = {
@@ -121,6 +145,7 @@ class Extractor:
         self.hub.publish(st.call_id, "extraction.updated", {"fields": st.fields, "version": st.version, "mode": mode})
         enr = result.get("enrichment")
         if self.s.enrichment and isinstance(enr, dict):
+            enr = normalize_enrichment(enr)
             st.enrichment = enr
             self.hub.publish(st.call_id, "enrichment.updated", enr)
 

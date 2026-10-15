@@ -17,6 +17,7 @@ from azure.communication.callautomation import CommunicationIdentifier  # noqa: 
 from azure.communication.callautomation._shared.models import MicrosoftTeamsUserIdentifier
 
 from .config import Settings
+from .security import call_token
 
 log = logging.getLogger("gateway.acs")
 
@@ -27,8 +28,9 @@ class AcsClient:
         self.client = CallAutomationClient.from_connection_string(settings.acs_connection_string)
 
     async def answer(self, incoming_context: str, call_id: str):
+        q = f"?t={call_token(self.s.gateway_secret, call_id)}" if self.s.gateway_secret else ""
         media = MediaStreamingOptions(
-            transport_url=f"{self.s.ws_base}/ws/{call_id}",
+            transport_url=f"{self.s.ws_base}/ws/{call_id}{q}",
             transport_type=StreamingTransportType.WEBSOCKET,
             content_type=MediaStreamingContentType.AUDIO,
             audio_channel_type=MediaStreamingAudioChannelType.UNMIXED,
@@ -39,7 +41,7 @@ class AcsClient:
         return await asyncio.to_thread(
             self.client.answer_call,
             incoming_context,
-            f"{self.s.public_base_url}/api/callbacks/{call_id}",
+            f"{self.s.public_base_url}/api/callbacks/{call_id}{q}",
             media_streaming=media,
         )
 

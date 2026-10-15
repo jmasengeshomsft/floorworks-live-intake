@@ -65,6 +65,7 @@ class SpeechTranscriber:
         else:
             cfg = sdk.SpeechConfig(subscription=settings.speech_key, region=settings.speech_region)
         cfg.speech_recognition_language = settings.speech_language
+        cfg.set_property(self._sdk.PropertyId.Speech_SegmentationSilenceTimeoutMs, "600")  # finalize sooner after a pause
         return cfg
 
     def _start(self, st: CallState, participant: str, loop: asyncio.AbstractEventLoop):

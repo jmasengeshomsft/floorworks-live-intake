@@ -32,6 +32,13 @@ class Settings:
     acs_connection_string: str = ""
     local_dev: bool = False
 
+    # infra endpoint protection (empty = not enforced)
+    gateway_secret: str = ""  # HMAC key for per-call callback / media URL tokens
+    eventgrid_secret: str = ""  # shared secret expected on /api/incoming (?s= or aeg-sas-key header)
+    acs_jwt_mode: str = "off"  # off | warn | enforce: validate the ACS-signed JWT on callbacks and /ws
+    acs_resource_id: str = ""  # expected JWT audience (ACS immutable resource id)
+    line_numbers: list[str] = field(default_factory=list)  # accepted called numbers; empty = any
+
     # auth: comma separated API keys; empty = auth disabled (dev only)
     api_keys: list[str] = field(default_factory=list)
 
@@ -106,6 +113,11 @@ def load_settings() -> Settings:
         extractor_agent=_env("EXTRACTOR_AGENT_NAME"),
         acs_connection_string=_env("ACS_CONNECTION_STRING"),
         local_dev=_env("LOCAL_DEV") == "1",
+        gateway_secret=_env("GATEWAY_SECRET"),
+        eventgrid_secret=_env("EVENTGRID_SECRET"),
+        acs_jwt_mode=(_env("ACS_JWT_MODE") or ("off" if _env("LOCAL_DEV") == "1" else "enforce")).lower(),
+        acs_resource_id=_env("ACS_RESOURCE_ID"),
+        line_numbers=_list("LINE_NUMBERS"),
         api_keys=_list("API_KEYS"),
         extraction_schema=schema,
         enrichment=_env("ENRICHMENT", "off").lower() == "on",

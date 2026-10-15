@@ -69,7 +69,7 @@ class FunctionRegistry:
             fut: asyncio.Future = asyncio.get_running_loop().create_future()
             st.pending_functions[fn_call_id] = fut
             try:
-                r = await post_signed(fd.webhook_url, payload, self.settings.webhook_secret, fd.timeout_ms / 1000, fn_call_id)
+                r = await post_signed(fd.webhook_url, payload, self.settings.webhook_secret, fd.timeout_ms / 1000, fn_call_id, self.settings.local_dev)
                 if r.status_code >= 300:
                     return {"status": "error", "error": f"webhook returned {r.status_code}"}
                 return await asyncio.wait_for(asyncio.shield(fut), fd.timeout_ms / 1000)
@@ -80,9 +80,11 @@ class FunctionRegistry:
             except Exception as e:  # noqa: BLE001
                 return {"status": "error", "error": str(e)}
         try:
-            r = await post_signed(fd.webhook_url, payload, self.settings.webhook_secret, fd.timeout_ms / 1000, fn_call_id)
+            r = await post_signed(fd.webhook_url, payload, self.settings.webhook_secret, fd.timeout_ms / 1000, fn_call_id, self.settings.local_dev)
             if r.status_code >= 300:
                 return {"status": "error", "error": f"webhook returned {r.status_code}"}
+            if len(r.content) > 262144:
+                return {"status": "error", "error": "webhook response too large"}
             try:
                 out = r.json()
             except json.JSONDecodeError:

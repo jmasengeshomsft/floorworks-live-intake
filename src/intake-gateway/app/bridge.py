@@ -19,6 +19,10 @@ from .state import CallState, CallStore, EventHub
 from .transcribe import REP_PREFIX, build_transcriber
 
 log = logging.getLogger("gateway.bridge")
+MAX_RECONNECTS = 20
+VOICE_CONNECT_ATTEMPTS = 3
+VOICE_RECONNECTS = 3
+VOICE_RETRY_DELAY_S = 1.0
 
 
 class Gateway:
@@ -73,6 +77,8 @@ class Gateway:
             if self.s.ringback:
                 st.ringing = True
                 asyncio.get_running_loop().create_task(self._ringback(st))
+            st.mark("transfer_started")
+            log.info("[%s] timeline: transfer started +%.1fs", st.call_id, st.marks["transfer_started"] - st.started_at)
             self.hub.publish(st.call_id, "transfer.started", {"targets": len(self.s.transfer_teams_ids)})
             await self.acs.add_teams_participants(st.conn_id, self.s.transfer_teams_ids)  # type: ignore[union-attr]
         except Exception as e:  # noqa: BLE001
@@ -82,7 +88,7 @@ class Gateway:
 
     async def _ringback(self, st: CallState) -> None:
         cycle = audio.ring_cycle()
-        end = asyncio.get_running_loop().time() + 45
+        end = asyncio.get_running_loop().time() + 120  # keep ringing until the rep joins; callers must not hear dead air
         i = 0
         while st.ringing and st.ws_send and asyncio.get_running_loop().time() < end:
             await st.ws_send(json.dumps({"kind": "AudioData", "audioData": {"data": audio.b64e(cycle[i % len(cycle)])}, "stopAudio": None}))
@@ -110,7 +116,10 @@ class Gateway:
     def _context_text(self, st: CallState, resume: bool) -> str:
         parts = [
             f"Call context: Call ID: {st.call_id}. Caller phone: {st.caller_phone or 'unknown'}. "
-            "Include the call ID and phone in any record you create."
+            "Include the call ID and phone in any record you create. "
+            "Never guess or infer the caller's name from the phone or call metadata; use only a name the caller says aloud. "
+            "Speak at most one short sentence at a time and never repeat the list of things you can look up. "
+            "Speech recognition may mishear equipment names (for example 'mail' for 'mill'); confirm if unsure."
         ]
         if self.s.greeting_context:
             parts.append(self.s.greeting_context)
@@ -177,6 +186,8 @@ class Gateway:
                 continue
             t = ev.get("type", "")
             if t == "response.output_audio.delta":
+                if st.mark("first_agent_audio"):
+                    log.info("[%s] timeline: first agent audio +%.1fs", st.call_id, st.marks["first_agent_audio"] - st.started_at)
                 if not st.muted:
                     pcm = audio.b64d(ev.get("delta", ""))
                     ai_ref.extend(pcm)
@@ -210,29 +221,75 @@ class Gateway:
 
     # ---------- ACS media socket ----------
 
+    async def _voice_up(self, st: CallState, resume: bool, ai_ref: bytearray):
+        """Connect to Voice Live with retries; return (vl, voice_task) or None."""
+        for attempt in range(VOICE_CONNECT_ATTEMPTS):
+            try:
+                vl, vl_send = await self._connect_voice(st, resume)
+            except Exception:  # noqa: BLE001
+                log.exception("[%s] voice connect failed (attempt %d/%d)", st.call_id, attempt + 1, VOICE_CONNECT_ATTEMPTS)
+                if attempt + 1 < VOICE_CONNECT_ATTEMPTS:
+                    await asyncio.sleep(VOICE_RETRY_DELAY_S * (attempt + 1))
+                continue
+            st.vl_send = vl_send
+            task = asyncio.get_running_loop().create_task(self._voice_loop(st, vl, vl_send, ai_ref))
+            return vl, task
+        return None
+
+    async def _hangup_now(self, st: CallState) -> None:
+        if self.acs is None or not st.conn_id:
+            return
+        try:
+            await self.acs.hang_up(st.conn_id)
+        except Exception:  # noqa: BLE001
+            log.debug("[%s] hang up skipped (call already gone)", st.call_id)
+
     async def handle_ws(self, ws: WebSocket, call_id: str) -> None:
-        await ws.accept()
         st = self.store.get_or_create(call_id)
+        # exactly one media socket per call; reject extras (each would open a billed Voice Live session)
+        if st.finalized or st.connections >= MAX_RECONNECTS or st.active_ws > 0:
+            await ws.close(code=1008)
+            return
+        # counted before the await so _maybe_finalize cannot run between the check and the increment
         st.active_ws += 1
         st.connections += 1
         resume = st.connections > 1
-        self.limits.acquire(call_id)  # no-op if registered at /api/incoming (also covers direct ws tests)
-        st.status = "active"
         send_lock = asyncio.Lock()
-
-        async def ws_send(text: str) -> None:
-            async with send_lock:
-                await ws.send_text(text)
-
-        st.ws_send = ws_send
-        ai_ref = bytearray()
         vl = None
         voice_task = None
         try:
-            vl, vl_send = await self._connect_voice(st, resume)
-            st.vl_send = vl_send
-            voice_task = asyncio.get_running_loop().create_task(self._voice_loop(st, vl, vl_send, ai_ref))
+            await ws.accept()
+            if not self.limits.acquire(call_id):  # no-op if registered at /api/incoming (also covers direct ws tests)
+                log.warning("[%s] over capacity", call_id)
+                await ws.close(code=1013)
+                return
+            st.status = "active"
+
+            async def ws_send(text: str) -> None:
+                async with send_lock:
+                    await ws.send_text(text)
+
+            st.ws_send = ws_send
+            ai_ref = bytearray()
+            up = await self._voice_up(st, resume, ai_ref)
+            if up is None:
+                self.hub.publish(call_id, "error", {"stage": "voice", "message": "voice connect failed"})
+                await self._hangup_now(st)
+                return
+            vl, voice_task = up
+            reconnects = 0
             while True:
+                if voice_task.done():
+                    voice_task.cancel()
+                    if vl:
+                        await vl.close()
+                    reconnects += 1
+                    up = await self._voice_up(st, True, ai_ref) if reconnects <= VOICE_RECONNECTS else None
+                    if up is None:
+                        self.hub.publish(call_id, "error", {"stage": "voice", "message": "voice connection lost"})
+                        await self._hangup_now(st)
+                        break
+                    vl, voice_task = up
                 reason = self.limits.expired(call_id)
                 if reason:
                     log.warning("[%s] dropping call: %s", call_id, reason)
@@ -251,9 +308,12 @@ class Gateway:
                 if m.get("kind") != "AudioData":
                     continue
                 ad = m.get("audioData") or {}
-                if ad.get("silent") or not ad.get("data"):
-                    continue
                 pid = ad.get("participantRawID") or ""
+                if ad.get("silent") or not ad.get("data"):
+                    # Speech needs the pauses to end an utterance; dropping silence delays every line.
+                    if (st.transfer_started or st.rep_joined) and pid:
+                        await self.transcriber.feed(st, pid, bytes(960))  # 20 ms of 24 kHz silence
+                    continue
                 if st.transfer_started or st.rep_joined:
                     await self.transcriber.feed(st, pid, audio.b64d(ad["data"]))
                 if pid.startswith(REP_PREFIX):
@@ -263,7 +323,10 @@ class Gateway:
                 pcm = audio.b64d(ad["data"])
                 ref = bytes(ai_ref[: len(pcm)])
                 del ai_ref[: len(pcm)]
-                await vl_send({"type": "input_audio_buffer.append", "audio": audio.b64e(audio.interleave(pcm, ref))})
+                try:
+                    await st.vl_send({"type": "input_audio_buffer.append", "audio": audio.b64e(audio.interleave(pcm, ref))})
+                except websockets.ConnectionClosed:
+                    continue  # voice_task ends with the socket; the loop top reconnects
         except (WebSocketDisconnect, RuntimeError):
             pass
         except Exception:  # noqa: BLE001
@@ -274,18 +337,27 @@ class Gateway:
                 voice_task.cancel()
             if vl:
                 await vl.close()
+            try:
+                await ws.close()
+            except Exception:  # noqa: BLE001
+                pass  # already closed by the peer
             asyncio.get_running_loop().create_task(self._maybe_finalize(st))
 
     async def _maybe_finalize(self, st: CallState) -> None:
         await asyncio.sleep(4)  # ACS may reopen the socket mid-call
-        if st.active_ws > 0 or st.status == "ended":
+        if st.active_ws > 0 or st.finalized:
             return
+        st.finalized = True  # set before any await so concurrent finalizers and reconnects see it
         self.limits.release(st.call_id)
         st.status = "ended"
         st.ringing = False
+        await self._hangup_now(st)  # never leave an orphaned live ACS call behind
         await self.transcriber.close(st)
         import time
 
         st.ended_at = time.time()
+        log.info("timeline: [%s] ended +%.1fs marks=%s", st.call_id, st.ended_at - st.started_at,
+                 {k: round(v - st.started_at, 1) for k, v in st.marks.items()})
         await self.extractor.finalize(st)
+        log.info("[%s] timeline: final extraction done +%.1fs after hang-up", st.call_id, time.time() - st.ended_at)
         self.hub.publish(st.call_id, "call.ended", {"fields": st.fields, "enrichment": st.enrichment, "transcript": st.transcript})

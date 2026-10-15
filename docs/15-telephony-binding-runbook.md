@@ -11,6 +11,42 @@ Caller -> Teams number -> Resource account (app instance)
        -> IncomingCall -> Event Grid system topic -> webhook -> gateway /api/incoming
 ```
 
+## What you need and where to find it
+
+| Item | Requirement | Where to find it |
+|---|---|---|
+| Entra app registration | single-tenant, with a service principal; its AppId = `BotAppId` | Entra admin center > App registrations > Overview |
+| Azure Bot | `msaAppId` = the AppId; Teams channel with calling enabled; calling webhook = gateway | Azure portal > Azure Bot > Channels |
+| ACS resource | same tenant; ACS first-party app `1fd5118e-2576-4263-8130-9503064c837a` present | Azure portal > ACS |
+| `AcsImmutableId` | ACS "immutable resource ID" | ACS > Overview/Properties, or `immutableResourceId` via `az rest` |
+| `AcsHost` | `<name>.communication.azure.com` | ACS > Keys/Endpoint |
+| `TenantId` | directory id | Entra > Overview |
+| Resource account | application instance: ApplicationId = AppId, AcsResourceId = immutable id | `Get-CsOnlineApplicationInstance`; Entra > Users (`TPE_RESOURCE_ACCOUNT_OID`) |
+| Resource account license | Teams Phone Resource Account (`PHONESYSTEM_VIRTUALUSER`, free); usage location set first | M365 admin center > Billing > Licenses |
+| Rep license | Teams Phone Standard or a SKU with `MCOEV`; Enterprise Voice on | M365 admin center > Licenses |
+| `RepObjectIds` | user object id (not app/client id) | Entra > Users > Object ID |
+| Phone number | Calling Plan, Operator Connect or Direct Routing; must be a service (voice application) number | Teams admin center > Voice > Phone numbers |
+| Event Grid | `IncomingCall` webhook on the ACS system topic -> gateway `/api/incoming` | Azure portal > ACS > Events |
+
+## Step 0 - Preflight (run before anything else)
+
+`teams\preflight-teams.ps1` is read-only. It signs in once (device code as Teams admin, plus `az login` in the same tenant) and prints PASS / WARN / FAIL with a fix hint per check. It exits 1 on any FAIL, so you can gate on it.
+
+```powershell
+.\teams\preflight-teams.ps1 -AcsName <acs-name> -ResourceGroup <rg>   # ACS args optional
+```
+
+| Area | Checks | FAIL means |
+|---|---|---|
+| Config/tooling | `teams\.env` keys, E.164 number, MicrosoftTeams module, `az` in the right tenant | fix before continuing |
+| License | `PHONESYSTEM_VIRTUALUSER` SKU exists (free units); a SKU with `MCOEV` for reps | buy/assign the license |
+| Number | exists, type CallingPlan/OperatorConnect/DirectRouting, supports voice applications (service number), activated, current assignment | wrong number type, not acquired |
+| Resource account | exists, ApplicationId vs `BotAppId`, AcsResourceId vs `AcsImmutableId`, usage location, `PHONESYSTEM_VIRTUALUSER` license | number assignment will fail without the license |
+| Reps | in Entra, `MCOEV` license, Enterprise Voice | EV cannot be enabled without the license |
+| ACS | immutable id and host match `.env`; ACS first-party app exists in the tenant | wrong values in `.env` |
+
+WARN items (account missing, stale ApplicationId, number on another target, EV off) are fixed by the steps below. Re-run after each Teams change; a new license can take up to an hour to reach Teams.
+
 ## What the runbook does, step by step (illustration)
 
 Each step adds one link (five links in total: resource account, Entra app, Azure Bot, ACS assignment, Event Grid). After step 6 a call flows end to end.
@@ -86,6 +122,20 @@ az eventgrid system-topic event-subscription create -g $rg --system-topic-name $
   --included-event-types Microsoft.Communication.IncomingCall
 # Event Grid validates the webhook handshake; the gateway must be up and public first.
 ```
+
+**Securing the endpoints (recommended).** Set these gateway env vars (values from your secret store; never commit them):
+
+| Var | Effect |
+|---|---|
+| `EVENTGRID_SECRET` | `/api/incoming` requires `?s=<secret>` (or `aeg-sas-key` header). Append it to the subscription endpoint: `--endpoint "https://$gatewayFqdn/api/incoming?s=<EVENTGRID_SECRET>"`. Set the secret and update the subscription together, or deliveries get 401. |
+| `GATEWAY_SECRET` | Per-call HMAC token (`?t=`) is added to the ACS callback and media WebSocket URLs and required on `/api/callbacks/{id}` and `/ws/{id}`. |
+| `LINE_NUMBERS` | Comma-separated E.164 numbers this gateway serves; calls to other numbers are ignored. |
+| `ACS_JWT_MODE` / `ACS_RESOURCE_ID` | Validates the ACS-signed JWT (issuer `https://acscallautomation.communication.azure.com`, audience = ACS immutable resource ID from `az communication show`) on `/api/callbacks` and `/ws`. `off` (default) → `warn` (log failures) → `enforce` (401 / close 1008). Roll out in `warn`, place a test call on each line, confirm no `ACS JWT invalid` log lines, then switch to `enforce`. Outside `LOCAL_DEV` the verifier is always `enforce` and startup fails otherwise; after any deploy check the logs for "configuration validated" (a crashed revision leaves the old one serving `/healthz`). |
+| `LINE_NUMBERS` (Teams-routed calls) | Teams-routed calls arrive with `to=28:orgid:<resource-account-guid>`, so include those IDs as well as the E.164 number. |
+| Timeline logs | Each call logs `timeline:` lines (connected, first agent audio, transfer started, rep joined, ended, final-extraction duration) as seconds since call start. v9 also extends ringback to 120 s so there is no dead air while waiting for the rep. |
+| `WEBHOOK_SECRET` | Signs outbound webhooks (`WEBHOOK_URLS`, function webhooks). Webhook URLs must be `https` and resolve to public addresses (SSRF guard); redirects are not followed and function responses over 256 KB are rejected. `LOCAL_DEV=1` relaxes the URL rules. |
+
+Unset = not enforced (a startup warning is logged). `/ws` never creates call state, call ids are 128-bit random, and WebSocket frames are capped at 1 MiB.
 
 **Result - one call, end to end**
 ```
@@ -193,6 +243,30 @@ Open item: the bot's calling webhook still points at the old `tpe-call-controlle
 
 Full teardown and rebuild using only the scripts (`rebind-tpe-azure.ps1` Teardown, CreateApp (app + bot), Assign, Subscribe, then `teams\rebind-tpe.ps1 -Action Rebind` under `pwsh`). New AppId `<current-app-id>`. The call at 22:04Z connected: IncomingCall, answered, media WebSocket accepted, live notes started, 211 s. Notes: Teams readback right after Rebind still showed the old ApplicationId (propagation lag), but the call worked; Teams scripts must run in `pwsh` (module `MicrosoftTeams`), not Windows PowerShell 5.
 
+## Add another phone number (separate line with its own bot app)
+
+Use this when you buy or port a new number and want it isolated from the working line (own Entra app, own Azure Bot, own resource account). One resource account carries one number. Nothing on the existing line is touched. No gateway or Event Grid change is needed: the gateway does not route on the called number, and all lines share the `IncomingCall` subscription.
+
+1. Find the number: Teams admin center > Voice > Phone numbers. It must be **Activated**, capability **Voice application assignment**, **Unassigned**. Or: `Get-CsPhoneNumberAssignment -TelephoneNumber <+E164>` (check `NumberType`, `ActivationState`, `Capability`, `PstnAssignmentStatus`).
+2. Create a new app and bot: `pwsh infra\rebind-tpe-azure.ps1 -Action CreateApp -AppName <new-app-name>`. Note the new AppId. **Always pass `-AppName` on every later action for this line** (the default targets the first line; never run Teardown without it).
+3. Run `teams\setup-teams.ps1` with `-BotAppId <new-app-id>`, a **new** `-ResourceAccountUpn <intake2@contoso.com>`, `-DisplayName`, and `-PhoneNumber <+E164>`; keep `-AcsImmutableId` and `-AcsHost` the same. In one device-code session it creates the account, binds ApplicationId and AcsResourceId, registers the ACS teamsExtension assignment, sets usage location, assigns `PHONESYSTEM_VIRTUALUSER`, assigns the number and syncs.
+4. License propagation: the number assignment can fail with "lacks appropriate licenses to assign a 'CallingPlan' number" right after the license is granted. Wait a few minutes and retry only the assignment: `Set-CsPhoneNumberAssignment -Identity <oid> -PhoneNumber <+E164> -PhoneNumberType CallingPlan`, then `Sync-CsOnlineApplicationInstance -ObjectId <oid> -ApplicationId <new-app-id>`. Then run the setup script's remaining steps (rep Enterprise Voice) if it aborted earlier.
+5. Verify: `Get-CsOnlineApplicationInstance` shows ApplicationId = new app id and AcsResourceId set; `Get-CsPhoneNumberAssignment` shows `VoiceApplicationAssigned`; Azure: `$env:TPE_RESOURCE_ACCOUNT_OID=<oid>; pwsh infra\rebind-tpe-azure.ps1 -Action Snapshot -AppName <new-app-name>` shows bot `msaAppId` = AppId and an ACS assignment of type `teamsResourceAccount`.
+6. Call the number and look for `IncomingCall` in the gateway logs. SIP 480 with no log line means the Teams or bot layer.
+
+To move a number between resource accounts, run `Remove-CsPhoneNumberAssignment -Identity <oid> -PhoneNumber <+E164> -PhoneNumberType <type>` first.
+
+### Fully isolated line (own ACS, Event Grid and gateway)
+
+Teams routes a call through the ACS named in the resource account's `AcsResourceId`, and Event Grid `IncomingCall` fires on that ACS. So a line that shares nothing with the first one except the Foundry agents needs its own ACS, topic, subscription and gateway. Steps 1-2 above are unchanged; replace the shared-ACS parts of step 3 with:
+
+1. Create an ACS resource (`az communication create`, data location matching the first). Note its host name and immutable resource id (`immutableResourceId`), and take its connection string.
+2. Deploy a second gateway from the public image `ghcr.io/jmasengeshomsft/floorworks-intake-gateway:latest` as its own Container App (external ingress, port 8080, min replicas 1, system-assigned identity). Copy the first gateway's env vars (Foundry endpoint, agent names, speech key and region, feature toggles), then override `ACS_CONNECTION_STRING` (new ACS), `API_KEYS` (new key) and `PUBLIC_BASE_URL` (the new app's own FQDN). Pass the environment by name, not by resource id.
+3. Grant the new gateway identity **Cognitive Services User** on the Foundry account (the only shared layer). No ACR role is needed for a public image.
+4. Create an Event Grid system topic on the new ACS (`Microsoft.Communication.CommunicationServices`) and a subscription for `Microsoft.Communication.IncomingCall` with webhook `https://<new-gateway-fqdn>/api/incoming`.
+5. Register the resource account on the **new** ACS: `PUT https://<new-acs-host>/access/teamsExtension/tenants/<tenant-id>/assignments/<resource-account-oid>?api-version=2025-06-30` with body `{}` and a token for `https://communication.azure.com`. Delete any earlier assignment for that account on the old ACS.
+6. Point Teams at the new ACS (device-code session in `pwsh`): `Set-CsOnlineApplicationInstance -Identity <oid> -ApplicationId <new-app-id> -AcsResourceId <new-acs-immutable-id>`, then `Sync-CsOnlineApplicationInstance`. Read back both values.
+7. Call the number. `IncomingCall` must appear in the new gateway's logs and not in the first gateway's.
 ## Scripts (inline copies)
 
 Config read by both scripts, `teams\.env`: `TenantId`, `AcsImmutableId`, `AcsHost`, `ResourceAccountUpn`, `PhoneNumber`.

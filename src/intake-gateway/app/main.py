@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import uuid
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -15,6 +14,7 @@ from .bridge import Gateway
 from .config import Settings, load_settings
 from .extractor import Extractor, TokenSource
 from .functions import FunctionRegistry
+from .security import AcsJwtVerifier, check_call_token, check_shared_secret, new_call_id, normalize_number
 from .state import CallStore, EventHub, MemoryStore, sse_frame
 from .validate import report
 from .webhooks import deliver_event
@@ -45,11 +45,13 @@ def create_app(settings: Settings | None = None, store: CallStore | None = None,
     extractor = Extractor(s, hub, tokens)
     functions = FunctionRegistry(s)
     gw = Gateway(s, store, hub, extractor, functions, acs, tokens)
+    acs_jwt = AcsJwtVerifier(s.acs_jwt_mode if s.local_dev else "enforce", s.acs_resource_id)
+    require = not s.local_dev  # infra secrets are mandatory outside LOCAL_DEV
 
     if s.webhook_urls:
 
         async def fan_out(_cid: str, ev: dict) -> None:
-            await deliver_event(s.webhook_urls, s.webhook_secret, ev)
+            await deliver_event(s.webhook_urls, s.webhook_secret, ev, allow_insecure=s.local_dev)
 
         hub.listeners.append(fan_out)
 
@@ -75,7 +77,7 @@ def create_app(settings: Settings | None = None, store: CallStore | None = None,
         async def simulate():
             from . import simulator
 
-            st = store.get_or_create(uuid.uuid4().hex[:8])
+            st = store.get_or_create(new_call_id())
             st.caller_phone = "+15550142"
             asyncio.get_running_loop().create_task(simulator.run(st, hub))
             return st.summary()
@@ -174,64 +176,130 @@ def create_app(settings: Settings | None = None, store: CallStore | None = None,
     async def healthz():
         return {"status": "degraded" if cfg_errors else "ok", "errors": cfg_errors, "activeCalls": gw.limits.active}
 
+    seen_events: dict[str, None] = {}
+
     @app.post("/api/incoming")
     async def incoming(request: Request):
-        events_ = await request.json()
+        if not check_shared_secret(
+            s.eventgrid_secret, request.query_params.get("s"), request.headers.get("aeg-sas-key"), require=require
+        ):
+            log.warning("incoming rejected: bad event grid secret")
+            raise HTTPException(401, "unauthorized")
+        try:
+            events_ = await request.json()
+        except ValueError as e:
+            raise HTTPException(400, "invalid json") from e
         if not isinstance(events_, list):
             events_ = [events_]
         for ev in events_:
+            if not isinstance(ev, dict):
+                continue
             et = ev.get("eventType", "")
-            data = ev.get("data", {})
+            data = ev.get("data") or {}
             log.info("event received type=%s", et)
             if et == "Microsoft.EventGrid.SubscriptionValidationEvent":
                 return {"validationResponse": data.get("validationCode")}
             if et != "Microsoft.Communication.IncomingCall":
                 continue
-            if acs is None:
-                raise HTTPException(503, "ACS not configured")
-            frm = data.get("from", {})
-            phone = (frm.get("phoneNumber") or {}).get("value") or frm.get("rawId", "")
-            to = data.get("to", {})
-            log.info("IncomingCall to=%s toRaw=%s from=%s", (to.get("phoneNumber") or {}).get("value"),
-                     to.get("rawId"), phone)
-            call_id = uuid.uuid4().hex[:8]
-            if gw.limits.at_capacity():
-                log.warning("incoming call rejected: at capacity (%d)", gw.limits.max_concurrent)
-                hub.publish(call_id, "error", {"stage": "capacity", "message": "gateway at max concurrent calls"})
-                try:
-                    await acs.reject(data["incomingCallContext"])
-                except Exception:  # noqa: BLE001
-                    log.exception("reject failed")
+            eid = str(ev.get("id") or "")
+            if eid and eid in seen_events:
+                log.info("duplicate event ignored")
                 continue
-            gw.limits.acquire(call_id)
-            st = store.get_or_create(call_id)
-            st.caller_phone = phone
-            st.after_hours = afterhours.is_active(s)
-            hub.publish(call_id, "call.incoming", {"callerPhone": phone, "afterHours": st.after_hours})
             try:
-                await acs.answer(data["incomingCallContext"], call_id)
+                await _handle_incoming(data)
             except Exception as e:  # noqa: BLE001
-                log.exception("answer failed")
-                gw.limits.release(call_id)
-                hub.publish(call_id, "error", {"stage": "answer", "message": str(e)})
-                raise HTTPException(500, "answer failed") from e
+                # Not marked seen: a 5xx makes Event Grid redeliver, and the retry is processed again.
+                log.exception("incoming call handling failed")
+                raise HTTPException(500, "incoming call handling failed") from e
+            if eid:
+                seen_events[eid] = None
+                while len(seen_events) > 1000:
+                    seen_events.pop(next(iter(seen_events)))
         return JSONResponse({"status": "ok"})
+
+    async def _handle_incoming(data: dict) -> None:
+        if acs is None:
+            log.error("incoming call but ACS not configured")
+            return
+        frm = data.get("from") or {}
+        phone = (frm.get("phoneNumber") or {}).get("value") or frm.get("rawId", "")
+        to = data.get("to") or {}
+        called = (to.get("phoneNumber") or {}).get("value") or to.get("rawId", "")
+        context = data.get("incomingCallContext")
+        log.info("IncomingCall to=%s", called)
+        if not context:
+            log.warning("incoming event without incomingCallContext")
+            return
+        if s.line_numbers and normalize_number(called) not in {normalize_number(n) for n in s.line_numbers}:
+            log.warning("incoming call for unlisted number ignored")
+            return
+        if gw.limits.at_capacity():
+            log.warning("incoming call rejected: at capacity (%d)", gw.limits.max_concurrent)
+            try:
+                await acs.reject(context)
+            except Exception:  # noqa: BLE001
+                log.exception("reject failed")
+            return
+        call_id = new_call_id()
+        gw.limits.acquire(call_id)
+        st = store.get_or_create(call_id)
+        st.caller_phone = phone
+        st.after_hours = afterhours.is_active(s)
+        hub.publish(call_id, "call.incoming", {"callerPhone": phone, "afterHours": st.after_hours})
+        try:
+            await acs.answer(context, call_id)
+        except Exception:  # noqa: BLE001
+            log.exception("answer failed")
+            gw.limits.release(call_id)
+            st.status = "ended"
+            st.finalized = True
+            hub.publish(call_id, "error", {"stage": "answer", "message": "answer failed"})
+            raise
 
     @app.post("/api/callbacks/{call_id}")
     async def callbacks(call_id: str, request: Request):
-        body = await request.json()
+        if not check_call_token(s.gateway_secret, call_id, request.query_params.get("t"), require=require):
+            raise HTTPException(401, "unauthorized")
+        if not await acs_jwt.verify(request.headers.get("authorization"), "callback"):
+            raise HTTPException(401, "unauthorized")
+        if store.get(call_id) is None:
+            raise HTTPException(404, "unknown call")
+        try:
+            body = await request.json()
+        except ValueError as e:
+            raise HTTPException(400, "invalid json") from e
         for ev in body if isinstance(body, list) else [body]:
+            if not isinstance(ev, dict):
+                continue
             et = (ev.get("type") or "").rsplit(".", 1)[-1]
-            data = ev.get("data", {})
+            data = ev.get("data") or {}
             st = store.get(call_id)
             if st is None:
                 continue
+            if st.finalized or st.status == "ended":
+                log.info("[%s] callback for ended call ignored", call_id)
+                continue
+            cc = data.get("callConnectionId", "")
+            if et != "CallConnected" and not st.conn_id:
+                log.debug("[%s] %s before CallConnected ignored", call_id, et)
+                continue
+            if st.conn_id and cc and cc != st.conn_id:
+                log.warning("[%s] callback for foreign connection ignored", call_id)
+                continue
             if et == "CallConnected":
+                if not cc or st.conn_id:
+                    continue  # duplicate delivery
                 st.conn_id = data.get("callConnectionId", "")
                 st.status = "active"
+                if st.mark("connected"):
+                    log.info("[%s] timeline: connected +%.1fs", call_id, st.marks["connected"] - st.started_at)
                 hub.publish(call_id, "call.connected", {})
             elif et == "AddParticipantSucceeded":
+                if st.rep_joined:
+                    continue  # duplicate delivery
                 st.rep_joined = True
+                st.mark("rep_joined")
+                log.info("[%s] timeline: rep joined +%.1fs", call_id, st.marks["rep_joined"] - st.started_at)
                 st.ringing = False
                 st.muted = True
                 hub.publish(call_id, "transfer.succeeded", {})
@@ -244,6 +312,13 @@ def create_app(settings: Settings | None = None, store: CallStore | None = None,
 
     @app.websocket("/ws/{call_id}")
     async def media_ws(ws: WebSocket, call_id: str):
+        st = store.get(call_id)
+        if not check_call_token(s.gateway_secret, call_id, ws.query_params.get("t"), require=require) or st is None or st.finalized:
+            await ws.close(code=1008)
+            return
+        if not await acs_jwt.verify(ws.headers.get("authorization"), "ws"):
+            await ws.close(code=1008)
+            return
         await gw.handle_ws(ws, call_id)
 
     return app

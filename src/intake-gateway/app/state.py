@@ -22,6 +22,7 @@ class CallState:
     transfer_started: bool = False
     ringing: bool = False
     active_ws: int = 0
+    finalized: bool = False
     connections: int = 0
     transcript: list[dict[str, Any]] = field(default_factory=list)
     fields: dict[str, Any] = field(default_factory=dict)
@@ -34,6 +35,14 @@ class CallState:
     response_done: asyncio.Event = field(default_factory=asyncio.Event)
     ws_send: Callable[[str], Awaitable[None]] | None = None
     vl_send: Callable[[dict], Awaitable[None]] | None = None
+    marks: dict[str, float] = field(default_factory=dict)
+
+    def mark(self, name: str) -> bool:
+        """Record the first time a call milestone happens; returns True only on that first time."""
+        if name in self.marks:
+            return False
+        self.marks[name] = time.time()
+        return True
 
     def add_line(self, speaker: str, text: str) -> dict[str, Any]:
         line = {"speaker": speaker, "text": text, "ts": time.time()}
