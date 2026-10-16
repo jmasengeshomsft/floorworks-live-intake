@@ -53,7 +53,22 @@ if (-not $ExpectedAcsResourceId) { $ExpectedAcsResourceId = $Lines[$Line].AcsRes
 if (-not $TenantId)           { $TenantId           = $DefaultTenantId }
 
 $ErrorActionPreference = 'Stop'
-$results = New-Object System.Collections.Generic.List[object]
+
+# Refuse to run with unfilled placeholders or malformed values (an empty identity makes Teams return EVERY resource account).
+$bad = @()
+if ($ResourceAccountUpn -notmatch '^[^@\s<>]+@[^@\s<>]+\.[^@\s<>]+$') { $bad += "ResourceAccountUpn ('$ResourceAccountUpn') must look like name@domain" }
+if ($PhoneNumber -notmatch '^\+?\d{8,15}$')                            { $bad += "PhoneNumber ('$PhoneNumber') must be E.164, e.g. +16305551234" }
+$guid = '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$'
+if ($ExpectedBotAppId -notmatch $guid)                                 { $bad += "ExpectedBotAppId ('$ExpectedBotAppId') must be a GUID" }
+if ($ExpectedAcsResourceId -notmatch $guid)                            { $bad += "ExpectedAcsResourceId ('$ExpectedAcsResourceId') must be a GUID" }
+if ($TenantId -notmatch $guid)                                         { $bad += "TenantId ('$TenantId') must be a GUID" }
+if ($bad) {
+  Write-Host 'Fill in the $Lines table at the top of this script, or pass the parameters. Problems:' -ForegroundColor Red
+  $bad | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
+  exit 2
+}
+
+$results =  New-Object System.Collections.Generic.List[object]
 $fail = 0; $warn = 0
 
 function Add-Result($status, $name, $detail = '', $fix = '') {
@@ -106,6 +121,8 @@ if ($TenantId -and $tenant.TenantId -ne $TenantId) {
 # 1. Resource account
 $ra = $null
 try { $ra = Get-CsOnlineApplicationInstance -Identity $ResourceAccountUpn } catch { }
+# Never accept a list: keep only the account whose UPN matches exactly.
+$ra = @($ra) | Where-Object { $_ -and $_.UserPrincipalName -eq $ResourceAccountUpn } | Select-Object -First 1
 if (-not $ra) {
   Add-Result FAIL 'Resource account exists' "($ResourceAccountUpn not found)"
 } else {
