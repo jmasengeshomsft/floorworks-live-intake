@@ -1,0 +1,20 @@
+{
+  "subscriptionId": "<subscription-guid>",
+  "resourceGroup": "<resource-group>",
+  "appName": "<gateway-app-name>",
+  "acrName": "<acr-name>",
+  "environmentName": "<container-apps-environment>",
+  "acsResourceName": "<acs-resource-name>",
+  "foundryProjectEndpoint": "https://<account>.services.ai.azure.com/api/projects/<project>",
+  "voiceAgentName": "<voice-agent-name>",
+  "extractorAgentName": "",
+  "resourceAccountObjectId": "",
+  "lineNumbers": "",
+  "transferTeamsObjectIds": "",
+  "corsOrigins": "",
+  "liveNotes": "on",
+  "enrichment": "off",
+  "speechRegion": "",
+  "speechKey": "",
+  "apiKeys": ""
+}

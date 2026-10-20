@@ -19,6 +19,12 @@ Order of operations:
 5. Create a Dataverse application user (System Administrator) for the app identity (`APP_PRINCIPAL_ID`), the same way `setup-foundry.ps1` does for the project identity.
 6. Manual: the Event Grid `IncomingCall` subscription to `<PUBLIC_BASE_URL>/api/incoming`, and moving the phone number.
 
+## Intake-gateway (Option A) deploy and verify
+
+1. `Copy-Item infra\gateway.parameters.example.json infra\gateway.<customer>.json` and fill it in (keep it out of git).
+2. `.\infra\deploy-gateway.ps1 -ParametersFile infra\gateway.<customer>.json` builds the image, creates or updates the app, reuses or generates secrets, derives `PUBLIC_BASE_URL`, creates the Event Grid subscription with the matching `?s=` and runs the verifier.
+3. `.\infra\verify-gateway.ps1 -ResourceGroup <rg> -AppName <app>` is read-only. Use it whenever Event Grid shows calls but the app is not invoked. It checks required env var names, `PUBLIC_BASE_URL` vs the FQDN, `/healthz`, and that the subscription `?s=` equals `EVENTGRID_SECRET`. It also flags `LINE_NUMBERS` drops.
+
 ## Notes
 
 - Create the Event Grid subscription only **after** the app is running: Event Grid validates the endpoint on creation.

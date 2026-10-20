@@ -7,3 +7,9 @@ obj/
 .vs/
 
 .azure/
+
+# per-customer gateway deploy parameters (real ids)
+infra/gateway.*.json
+!infra/gateway.parameters.example.json
+teams-side-report-*.json
+.playwright-mcp/

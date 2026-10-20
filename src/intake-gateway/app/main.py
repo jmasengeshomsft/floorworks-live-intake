@@ -231,7 +231,12 @@ def create_app(settings: Settings | None = None, store: CallStore | None = None,
             log.warning("incoming event without incomingCallContext")
             return
         if s.line_numbers and normalize_number(called) not in {normalize_number(n) for n in s.line_numbers}:
-            log.warning("incoming call for unlisted number ignored")
+            log.warning(
+                "incoming call ignored: called=%r is not in LINE_NUMBERS (%s). Teams resource accounts arrive as "
+                "28:orgid:<oid>, not a phone number; list that value or clear LINE_NUMBERS.",
+                called,
+                ",".join(s.line_numbers),
+            )
             return
         if gw.limits.at_capacity():
             log.warning("incoming call rejected: at capacity (%d)", gw.limits.max_concurrent)

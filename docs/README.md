@@ -15,6 +15,7 @@ Start here. Each section stands alone; read them in order for the full story, or
 | 09 | [Security & compliance](09-security.md) | review identities, roles, data handling and hardening work |
 | 10 | [Roadmap & known limits](10-roadmap.md) | know what is not done yet and what to build next |
 | 11 | [Demo guide](11-demo-guide.md) | run a clean demo, including a script and a recovery plan |
+| 16 | [Intake gateway: package, deploy, troubleshoot](16-intake-gateway-deploy.md) | deploy the Option A gateway and diagnose "Event Grid delivers but nothing happens" |
 | — | [Glossary](glossary.md) | decode the acronyms (ACS, TPE, MCP, ...) |
 
 ## Repo map
