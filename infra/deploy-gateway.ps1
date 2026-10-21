@@ -182,7 +182,15 @@ if (-not $existing) {
     --ingress external --target-port 80 --min-replicas 1 --max-replicas 3 --system-assigned --only-show-errors | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "containerapp create failed" }
 }
-$principal = az containerapp show -g $rg -n $app --query identity.principalId -o tsv
+$principal = ''
+for ($i = 0; $i -lt 6 -and -not $principal; $i++) {
+  $principal = ("$(az containerapp show -g $rg -n $app --query identity.principalId -o tsv)").Trim()
+  if (-not $principal) {
+    if ($i -eq 0) { az containerapp identity assign -g $rg -n $app --system-assigned --only-show-errors | Out-Null }
+    Start-Sleep 10
+  }
+}
+if (-not $principal) { throw "The app '$app' has no system-assigned identity. Run: az containerapp identity assign -g $rg -n $app --system-assigned" }
 Info "granting AcrPull to the app identity on $($p.acrName)"
 Grant $principal '7f951dda-4ed3-4680-a7ca-43fe172d538d' $acr.id 'AcrPull'
 az containerapp registry set -g $rg -n $app --server "$($p.acrName).azurecr.io" --identity system --only-show-errors | Out-Null
@@ -244,6 +252,7 @@ try {
 if ($LASTEXITCODE -ne 0) { $script:problems += 'verifier reported failures' }
 
 Write-Host "`nDeployed: https://$fqdn   image: $image" -ForegroundColor Green
+Write-Host "Console: app URL https://$fqdn ; API key = secret 'api-keys' (az containerapp secret list -g $rg -n $app --show-values --query ""[?name=='api-keys'].value"" -o tsv); CORS allows: $($p.corsOrigins)"
 Write-Host "Place a test call to the Teams number, then: az containerapp logs show -g $rg -n $app --tail 100 --format text"
 if ($script:problems.Count) { exit 1 }
 

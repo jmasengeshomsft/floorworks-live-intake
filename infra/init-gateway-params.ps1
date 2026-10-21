@@ -20,6 +20,7 @@ param(
   [string]$FoundryProject,
   [string]$VoiceAgent,
   [string]$ExtractorAgent,
+[string]$CorsOrigins,
   [switch]$NonInteractive,
   [switch]$Force
 )
@@ -188,6 +189,11 @@ if ($oid) {
 }
 
 Step "Phone number and call allow-list"
+$cors = $CorsOrigins
+if (-not $PSBoundParameters.ContainsKey('CorsOrigins')) {
+  $cors = Read-Host "  Console origin(s) allowed to call the gateway, comma-separated, or * for any [http://localhost:5173]"
+  if (-not $cors) { $cors = 'http://localhost:5173' }
+}
 $phone = $PhoneNumber
 if (-not $phone -and -not $NonInteractive) { $phone = Read-Host "  The Teams phone number people call, e.g. +15551234567 (Enter to skip)" }
 if ($phone) {
@@ -222,7 +228,7 @@ $params = [ordered]@{
   subscriptionId = $Subscription; resourceGroup = $envRg; appName = $AppName
   acrName = $acr.name; environmentName = $envName; acsResourceName = $acs.name
   foundryProjectEndpoint = $endpoint; voiceAgentName = $voice; extractorAgentName = $extractor
-  resourceAccountObjectId = "$oid"; lineNumbers = "$phone"; transferTeamsObjectIds = ($tIds -join ','); corsOrigins = ''
+  resourceAccountObjectId = "$oid"; lineNumbers = "$phone"; transferTeamsObjectIds = ($tIds -join ','); corsOrigins = "$cors"
   liveNotes = 'on'; enrichment = 'off'; speechRegion = $speechRegion; speechKey = $speechKey; apiKeys = ''
 }
 $out = Join-Path $PSScriptRoot "gateway.$Name.json"
