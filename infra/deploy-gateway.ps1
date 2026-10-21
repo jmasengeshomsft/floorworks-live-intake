@@ -232,6 +232,16 @@ foreach ($o in $others) {
   }
 }
 $endpoint = "https://$fqdn/api/incoming?s=$($sec['eventgrid-secret'])"
+# Event Grid validates the URL once; make sure the running revision already accepts this exact secret.
+$pre = '[{"id":"pre","topic":"t","subject":"s","eventType":"Microsoft.EventGrid.SubscriptionValidationEvent","eventTime":"2026-01-01T00:00:00Z","data":{"validationCode":"abc123"},"dataVersion":"2","metadataVersion":"1"}]'
+$accepted = $false; $lastCode = 0
+foreach ($i in 1..12) {
+  try { Invoke-WebRequest $endpoint -Method Post -Body $pre -ContentType 'application/json' -UseBasicParsing -TimeoutSec 15 | Out-Null; $accepted = $true; break }
+  catch { $lastCode = [int]$_.Exception.Response.StatusCode; Start-Sleep 10 }
+}
+if (-not $accepted) {
+  throw "The gateway rejects the Event Grid secret (HTTP $lastCode). The running revision does not have the secret this script just set. Check: az containerapp revision list -g $rg -n $app -o table (old revision still active?), then re-run the script."
+}
 az eventgrid system-topic event-subscription create -g $rg --system-topic-name $topic -n gateway-incoming `
   --endpoint $endpoint --endpoint-type webhook --included-event-types Microsoft.Communication.IncomingCall --only-show-errors 2>$null | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "Event Grid subscription failed (endpoint validation). Check: az containerapp logs show -g $rg -n $app --tail 50" }
