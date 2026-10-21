@@ -13,6 +13,21 @@ param(
   [switch]$SkipLogChecks
 )
 $ErrorActionPreference = 'Continue'
+$WarningPreference = 'SilentlyContinue'; $env:PYTHONWARNINGS = 'ignore'; $env:AZURE_CORE_ONLY_SHOW_ERRORS = 'true'; $env:AZURE_CORE_COLLECT_TELEMETRY = 'false'
+function az {
+  $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+  try {
+    $o = & az.cmd @args 2>&1
+    $code = $LASTEXITCODE
+    foreach ($l in $o) {
+      if ($l -is [System.Management.Automation.ErrorRecord]) {
+        $m = "$l"
+        if ($m.Trim() -and $m -notmatch 'SyntaxWarning|^\s*pattern=|invalid escape|DeprecationWarning|^\s*[/|\\-]?\s*Running \.\.|behavior of this command has been altered') { [Console]::Error.WriteLine($m) }
+      } else { $l }
+    }
+  } finally { $ErrorActionPreference = $ea }
+  $global:LASTEXITCODE = $code
+}
 if ($Subscription) { az account set --subscription $Subscription | Out-Null }
 
 $script:fail = 0; $script:warn = 0
@@ -96,3 +111,8 @@ if ($log -match 'event received type=Microsoft.Communication.IncomingCall') { Ok
 }
 Write-Host ("`nResult: {0} failure(s), {1} warning(s)" -f $script:fail, $script:warn) -ForegroundColor $(if ($script:fail) { 'Red' } else { 'Green' })
 exit ([int]($script:fail -gt 0))
+
+
+
+
+

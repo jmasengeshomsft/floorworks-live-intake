@@ -11,21 +11,125 @@ Option B (Foundry direct binding) does not use the gateway. See [14](14-telephon
 
 ## Quick start (no Azure experience needed)
 
-You need: a Windows, macOS or Linux machine with [PowerShell 7](https://aka.ms/powershell) and the [Azure CLI](https://aka.ms/installazurecli), and an Azure account with **Contributor** on the resource group you will use. Teams, the bot and Entra are assumed done.
+Two scripts: one creates the settings file by reading your Azure account, one deploys. You never type a resource ID or a secret by hand.
 
-1. **Sign in:** `az login`
-2. **Get the repo** and open a terminal in its root.
-3. **Create your settings file (no typing of IDs):** `.\infra\init-gateway-params.ps1 -Name mycompany`. It reads your Azure account and shows numbered lists of your ACS resources, Container Apps environments, registries, Foundry projects and agents. It derives the resource group from the ACS resource, reads the Speech key, checks the Teams consent, and writes `infra\gateway.mycompany.json`. Only the Teams resource account Object ID is asked for (`(Get-CsOnlineApplicationInstance -Identity <upn>).ObjectId`); press Enter to skip. For unattended use: `-NonInteractive -AcsResourceName <n> -FoundryProject <p> -VoiceAgent <a>`.
-   Secrets (`EVENTGRID_SECRET`, `GATEWAY_SECRET`, `API_KEYS`) are never typed: the deploy script generates them and stores them as Container App secrets.
-4. **Check before deploying (changes nothing):**
-   `.\infra\deploy-gateway.ps1 -ParametersFile infra\gateway.mycompany.json -Plan`
-   Every line should be `[ OK ]`. A `[FAIL]` line prints how to fix it.
-5. **Deploy:** `.\infra\deploy-gateway.ps1 -ParametersFile infra\gateway.mycompany.json`
-   Takes about 10 minutes. It ends with `Result: 0 failure(s)`.
-6. **Call the Teams number.** Watch: `az containerapp logs show -g <rg> -n <app> --tail 100 --format text`. You should see `event received type=Microsoft.Communication.IncomingCall`.
-7. **Something wrong?** Run `.\infra\verify-gateway.ps1 -ResourceGroup <rg> -AppName <app>` and follow section 7.
+```
+Teams number -> resource account -> ACS -> Event Grid -> intake gateway (Container App) -> Foundry voice agent -> Dataverse
+```
 
-Safe to re-run any time: it keeps existing secrets, so Event Grid stays connected. Never share or commit your settings file.
+### What must already exist (this guide does not create it)
+
+| Item | How you know it is ready |
+|---|---|
+| Teams phone number assigned to a **resource account** | Teams admin center shows the number on the resource account |
+| Resource account **Object ID** | `(Get-CsOnlineApplicationInstance -Identity <upn>).ObjectId` |
+| Azure Communication Services (ACS) resource with Teams extension **consent** for that resource account | `init-gateway-params.ps1` prints `ACS consent exists`. If it warns, run `infra\grant-acs-consent.ps1` after the Teams admin step |
+| Bot / Entra app registration | Verified by your Teams admin (`infra\verify-bot.ps1`) |
+| Foundry project with the **voice agent** (and optionally the **note-taker** agent) | Both show in the Foundry portal |
+| Container Apps environment and Azure Container Registry (ACR) | Both exist in your subscription |
+
+Your Azure account needs **Contributor** (and permission to create role assignments, e.g. **Owner** or **User Access Administrator**) on the resource group.
+
+### Tools
+
+- [PowerShell 7](https://aka.ms/powershell) (`pwsh`) or Windows PowerShell 5.1
+- [Azure CLI](https://aka.ms/installazurecli)
+- This repository, opened in a terminal at its root
+
+### Step 1. Sign in
+
+```powershell
+az login
+```
+
+### Step 2. Create the settings file (script 1)
+
+```powershell
+.\infra\init-gateway-params.ps1
+```
+
+The script reads your Azure account and shows numbered lists. Answer with a number; press Enter to accept a suggestion.
+
+| Prompt | What to enter |
+|---|---|
+| Deployment name | A short lowercase name, e.g. `my-gateway`. It becomes the file `infra\gateway.my-gateway.json` **and** the Container App name |
+| Subscription | Enter to accept the current one, or `n` to pick from a list |
+| ACS resource | The number of your ACS resource (the resource group is derived from it) |
+| Container Apps environment, registry | Pick from the lists |
+| Foundry account, project | Pick from the lists |
+| Voice agent | The agent callers talk to |
+| Note-taker agent | Enter accepts the suggested `*notetaker*` agent; `0` for none |
+| Resource account Object ID | The GUID from the Teams admin step. The script checks the ACS consent |
+| Teams phone number | E.164, e.g. `+15551234567` |
+| Transfer targets | Optional. Object IDs (Entra ID > Users) of people the agent can transfer to; Enter to skip |
+
+If the file already exists you are asked whether to overwrite it or use a new name. The Speech key is read from Foundry automatically.
+
+The file contains a key. **Never commit or share it** (`infra\gateway.*.json` is git-ignored).
+
+Unattended version:
+
+```powershell
+.\infra\init-gateway-params.ps1 -NonInteractive -Name my-gateway `
+  -AcsResourceName <acs> -FoundryAccount <account> -FoundryProject <project> `
+  -VoiceAgent <voice-agent> -ExtractorAgent <note-taker> `
+  -PhoneNumber +15551234567 -ResourceAccountObjectId <guid> [-TransferTeamsObjectIds <guid,guid>]
+```
+
+### Step 3. Check (changes nothing)
+
+```powershell
+.\infra\deploy-gateway.ps1 -ParametersFile .\infra\gateway.my-gateway.json -Plan
+```
+
+Every line must be `[ OK ]`. A `[FAIL]` line prints the fix. Re-run until it passes.
+
+### Step 4. Deploy (script 2)
+
+```powershell
+.\infra\deploy-gateway.ps1 -ParametersFile .\infra\gateway.my-gateway.json
+```
+
+- You are shown the images already in your registry (newest suggested). Press Enter to reuse the latest, pick another number, or `B` to build from the current source. Skip the question with `-UseImage <tag>` or `-Rebuild`.
+- A **new** app gets freshly generated secrets (`EVENTGRID_SECRET`, `GATEWAY_SECRET`, `API_KEYS`). Re-running against an existing app reuses its secrets, so the Event Grid link stays valid.
+- It creates the app, grants it `AcrPull` on the registry and `Foundry User` on the Foundry account, sets `PUBLIC_BASE_URL` and `LINE_NUMBERS`, waits for `/healthz`, creates the Event Grid subscription, then runs smoke tests and the verifier.
+- Takes about 10 minutes (2 to 3 if you reuse an image). It must end with `Result: 0 failure(s)`. A `no dead-letter destination` warning is expected.
+
+### Step 5. Place a test call
+
+Call the Teams number, then watch the logs:
+
+```powershell
+az containerapp logs show -g <resource-group> -n my-gateway --tail 100 --format text
+```
+
+You should see `event received type=Microsoft.Communication.IncomingCall` followed by the call being answered.
+
+### If it does not work
+
+Run the read-only checker, then follow section 7:
+
+```powershell
+.\infra\verify-gateway.ps1 -ResourceGroup <resource-group> -AppName my-gateway
+```
+
+| Symptom | Likely cause |
+|---|---|
+| Events on Event Grid, nothing in the container | Wrong secret in the subscription URL (log: `bad event grid secret`), wrong `PUBLIC_BASE_URL`, or app not healthy |
+| `incoming call ignored` in the log | The called identity is not in `LINE_NUMBERS`. Teams resource accounts arrive as `28:orgid:<oid>` |
+| Call never reaches Event Grid | Missing ACS Teams extension consent, or another IncomingCall subscription on the same topic (Option B binding still attached) |
+| Gateway cannot call the agent | `Foundry User` role not yet applied (wait a minute) or wrong agent name |
+
+### Clean up / redeploy
+
+Only one subscription should receive IncomingCall for a number. To release the number, delete the Event Grid subscription `gateway-incoming` on the ACS system topic and the Container App:
+
+```powershell
+az eventgrid system-topic event-subscription delete -g <rg> --system-topic-name <acs>-topic -n gateway-incoming --yes
+az containerapp delete -g <rg> -n my-gateway --yes
+```
+
+Deleting and recreating the app generates new secrets and a new URL, so always delete the old subscription first.
 
 ## 1. Prerequisites
 
@@ -63,9 +167,9 @@ The script is idempotent. It:
 
 1. Reuses secrets from the running app (so the Event Grid URL stays valid) or generates `GATEWAY_SECRET`, `EVENTGRID_SECRET`, `API_KEYS` (cryptographic random).
 2. Reads the ACS connection string and immutable resource id from the ACS resource.
-3. Builds and pushes the image (skip with `-SkipBuild -ImageTag <existing>`).
+3. Lists the images already in your registry (newest first, suggested by default) and lets you pick one, or press `B` to build a fresh image from your current source. Skip the question with `-UseImage <tag>` or `-Rebuild`.
 4. Creates or updates the Container App: external ingress, port 8080, `minReplicas=1`, secrets as `secretref:`, system managed identity.
-5. Grants that identity `AcrPull` on the registry and `Azure AI User` on the Foundry account (needed to call the voice agent).
+5. Grants that identity `AcrPull` on the registry and `Foundry User` (formerly `Azure AI User`, role id 53ca6127-db72-4b80-b1b0-d745d6d5456d) on the Foundry account (needed to call the voice agent).
 6. Derives `PUBLIC_BASE_URL` from the app FQDN and adds `28:orgid:<resourceAccountObjectId>` to `LINE_NUMBERS`.
 7. Waits for `/healthz` = `ok` **before** touching Event Grid (Event Grid validates the endpoint on creation).
 8. Creates or updates the `gateway-incoming` subscription to `https://<fqdn>/api/incoming?s=<EVENTGRID_SECRET>`, filtered to `Microsoft.Communication.IncomingCall`. Warns if another subscription on the same topic also takes IncomingCall (two consumers would both try to answer).
@@ -277,4 +381,10 @@ A 401 then a 2xx (the 401 was confirmed against the live gateway; the empty-list
 
 - No `/readyz` or startup config banner; use `/healthz` and the verifier.
 - The ACS Teams extension consent is a separate script and is not part of the deploy.
+
+
+
+
+
+
 

@@ -11,6 +11,12 @@
 .PARAMETER ParametersFile
   JSON copy of gateway.parameters.example.json. Keep it out of git.
 
+.PARAMETER Rebuild
+  Always build a fresh image (otherwise you are offered the images already in the registry).
+
+.PARAMETER UseImage
+  Deploy an existing tag from the registry (e.g. 20261021-0030) without being asked.
+
 .PARAMETER Plan
   Run preflight checks only; change nothing.
 
@@ -23,9 +29,26 @@ param(
   [Parameter(Mandatory)][string]$ParametersFile,
   [string]$ImageTag = (Get-Date -Format 'yyyyMMdd-HHmm'),
   [switch]$SkipBuild,
+  [switch]$Rebuild,
+  [string]$UseImage,
   [switch]$Plan
 )
 $ErrorActionPreference = 'Stop'
+$WarningPreference = 'SilentlyContinue'; $env:PYTHONWARNINGS = 'ignore'; $env:AZURE_CORE_ONLY_SHOW_ERRORS = 'true'; $env:AZURE_CORE_COLLECT_TELEMETRY = 'false'
+function az {
+  $ea = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+  try {
+    $o = & az.cmd @args 2>&1
+    $code = $LASTEXITCODE
+    foreach ($l in $o) {
+      if ($l -is [System.Management.Automation.ErrorRecord]) {
+        $m = "$l"
+        if ($m.Trim() -and $m -notmatch 'SyntaxWarning|^\s*pattern=|invalid escape|DeprecationWarning|^\s*[/|\\-]?\s*Running \.\.|behavior of this command has been altered') { [Console]::Error.WriteLine($m) }
+      } else { $l }
+    }
+  } finally { $ErrorActionPreference = $ea }
+  $global:LASTEXITCODE = $code
+}
 $script:problems = @()
 function Step($m) { Write-Host "`n== $m" -ForegroundColor Cyan }
 function Ok($m)   { Write-Host "  [ OK ] $m" -ForegroundColor Green }
@@ -34,6 +57,10 @@ function Problem($m, $fix) { Write-Host "  [FAIL] $m" -ForegroundColor Red; if (
 function J($t) { $s = ($t | Out-String).Trim(); if ($s) { $s | ConvertFrom-Json } }
 function Az-Quiet { $r = & az @args 2>$null; if ($LASTEXITCODE -ne 0) { return $null }; $r }
 
+function Grant($principal, $roleId, $scope, $label) {
+  $out = az role assignment create --assignee-object-id $principal --assignee-principal-type ServicePrincipal --role $roleId --scope $scope --only-show-errors -o none 2>&1
+  if ($LASTEXITCODE -ne 0 -and "$out" -notmatch 'already exists') { Problem "could not grant $label" "Run: az role assignment create --assignee-object-id $principal --assignee-principal-type ServicePrincipal --role $roleId --scope $scope" }
+}
 function New-Secret {
   $b = New-Object byte[] 24
   [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b)
@@ -75,12 +102,13 @@ if ($Plan) { Write-Host "`nPreflight passed. Re-run without -Plan to deploy." -F
 
 # ---------------------------------------------------------------- secrets
 Step "Secrets"
-$existing = J (Az-Quiet containerapp show -g $rg -n $app -o json)
+$existing = (J (az containerapp list -g $rg --query "[?name=='$app'].name" -o json)) -contains $app
 $sec = @{}
 if ($existing) {
   foreach ($s in (J (az containerapp secret list -g $rg -n $app --show-values -o json))) { $sec[$s.name] = $s.value }
-  Ok "reusing secrets from running app (Event Grid URL stays valid)"
+  Ok "app $app already exists: reusing its secrets (Event Grid URL stays valid)"
 }
+if (-not $existing) { Info "new app: creating fresh secrets" }
 foreach ($n in 'gateway-secret','eventgrid-secret') { if (-not $sec[$n]) { $sec[$n] = New-Secret; Info "generated $n" } }
 if ($p.apiKeys) { $sec['api-keys'] = $p.apiKeys } elseif (-not $sec['api-keys']) { $sec['api-keys'] = New-Secret; Info "generated api-keys" }
 $keys = J (az communication list-key -g $rg -n $p.acsResourceName -o json)
@@ -89,15 +117,38 @@ if ($p.speechKey) { $sec['speech-key'] = $p.speechKey }
 $secretArgs = @($sec.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" })
 
 # ---------------------------------------------------------------- image
-$image = "$($p.acrName).azurecr.io/intake-gateway:$ImageTag"
+$existingTags = @(J (az acr repository show-tags -n $p.acrName --repository intake-gateway --orderby time_desc --detail --top 8 -o json))
+$build = -not $SkipBuild
 if (-not $SkipBuild) {
+  if ($UseImage) {
+    if (-not ($existingTags | Where-Object { $_.name -eq $UseImage })) { throw "Tag '$UseImage' not found in $($p.acrName)/intake-gateway. Latest: $((($existingTags | Select-Object -First 3).name) -join ', ')" }
+    $ImageTag = $UseImage; $build = $false
+  } elseif (-not $Rebuild -and $existingTags.Count) {
+    Step "Image"
+    Write-Host "  Images already in $($p.acrName)/intake-gateway (newest first):"
+    for ($i = 0; $i -lt $existingTags.Count; $i++) {
+      $when = ([datetime]$existingTags[$i].createdTime).ToLocalTime().ToString('yyyy-MM-dd HH:mm')
+      Write-Host ("    [{0}] {1}   built {2}{3}" -f ($i + 1), $existingTags[$i].name, $when, $(if ($i -eq 0) { '   (latest, suggested)' } else { '' }))
+    }
+    Write-Host "    [B] build a new image from your current source (about 2 minutes)"
+    while ($true) {
+      $a = (Read-Host "  Choose (Enter = 1)").Trim()
+      if (-not $a) { $a = '1' }
+      $n = 0
+      if ($a -match '^[bB]$') { break }
+      if ([int]::TryParse($a, [ref]$n) -and $n -ge 1 -and $n -le $existingTags.Count) { $ImageTag = $existingTags[$n - 1].name; $build = $false; break }
+      Write-Host "  Enter a number from the list, or B." -ForegroundColor Yellow
+    }
+  }
+}
+$image = "$($p.acrName).azurecr.io/intake-gateway:$ImageTag"
+if ($build) {
   Step "Build image $image"
   $ctx = Join-Path (Split-Path $PSScriptRoot -Parent) 'src\intake-gateway'
   az acr build -r $p.acrName -t "intake-gateway:$ImageTag" $ctx --no-logs --only-show-errors | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "Image build failed. Run: az acr build -r $($p.acrName) -t intake-gateway:$ImageTag $ctx" }
   Ok "built"
-}
-
+} else { Ok "using existing image $image" }
 # ---------------------------------------------------------------- app
 Step "Container App"
 $lines = @()
@@ -133,11 +184,11 @@ if (-not $existing) {
 }
 $principal = az containerapp show -g $rg -n $app --query identity.principalId -o tsv
 Info "granting AcrPull to the app identity on $($p.acrName)"
-az role assignment create --assignee-object-id $principal --assignee-principal-type ServicePrincipal --role AcrPull --scope $acr.id --only-show-errors 2>$null | Out-Null
+Grant $principal '7f951dda-4ed3-4680-a7ca-43fe172d538d' $acr.id 'AcrPull'
 az containerapp registry set -g $rg -n $app --server "$($p.acrName).azurecr.io" --identity system --only-show-errors | Out-Null
 if ($foundry) {
-  Info "granting 'Azure AI User' on Foundry account $fHost"
-  az role assignment create --assignee-object-id $principal --assignee-principal-type ServicePrincipal --role "Azure AI User" --scope $foundry.id --only-show-errors 2>$null | Out-Null
+  Info "granting 'Foundry User' (Azure AI User) on Foundry account $fHost"
+  Grant $principal '53ca6127-db72-4b80-b1b0-d745d6d5456d' $foundry.id 'Foundry User (Azure AI User)'
 }
 az containerapp secret set -g $rg -n $app --secrets @secretArgs --only-show-errors | Out-Null
 $fqdn = az containerapp show -g $rg -n $app --query properties.configuration.ingress.fqdn -o tsv
@@ -195,3 +246,10 @@ if ($LASTEXITCODE -ne 0) { $script:problems += 'verifier reported failures' }
 Write-Host "`nDeployed: https://$fqdn   image: $image" -ForegroundColor Green
 Write-Host "Place a test call to the Teams number, then: az containerapp logs show -g $rg -n $app --tail 100 --format text"
 if ($script:problems.Count) { exit 1 }
+
+
+
+
+
+
+
