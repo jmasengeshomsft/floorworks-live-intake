@@ -15,20 +15,8 @@ You need: a Windows, macOS or Linux machine with [PowerShell 7](https://aka.ms/p
 
 1. **Sign in:** `az login`
 2. **Get the repo** and open a terminal in its root.
-3. **Make your settings file:** `Copy-Item infra\gateway.parameters.example.json infra\gateway.mycompany.json`, then open it and replace every `<...>` value. Where to find each value:
-
-   | Field | Where to find it |
-   |---|---|
-   | `subscriptionId` | `az account show --query id -o tsv` |
-   | `resourceGroup` | Azure portal > Resource groups; the group holding your ACS resource |
-   | `appName` | Any new name you choose, e.g. `floorworks-gateway` |
-   | `acrName` | `az acr list --query "[].name" -o tsv` (or create one) |
-   | `environmentName` | `az containerapp env list --query "[].name" -o tsv` |
-   | `acsResourceName` | `az communication list --query "[].name" -o tsv` |
-   | `foundryProjectEndpoint` | Foundry portal > your project > Overview > endpoint |
-   | `voiceAgentName` | Name of the agent in Foundry |
-   | `resourceAccountObjectId` | Teams admin: `(Get-CsOnlineApplicationInstance -Identity <upn>).ObjectId` |
-
+3. **Create your settings file (no typing of IDs):** `.\infra\init-gateway-params.ps1 -Name mycompany`. It reads your Azure account and shows numbered lists of your ACS resources, Container Apps environments, registries, Foundry projects and agents. It derives the resource group from the ACS resource, reads the Speech key, checks the Teams consent, and writes `infra\gateway.mycompany.json`. Only the Teams resource account Object ID is asked for (`(Get-CsOnlineApplicationInstance -Identity <upn>).ObjectId`); press Enter to skip. For unattended use: `-NonInteractive -AcsResourceName <n> -FoundryProject <p> -VoiceAgent <a>`.
+   Secrets (`EVENTGRID_SECRET`, `GATEWAY_SECRET`, `API_KEYS`) are never typed: the deploy script generates them and stores them as Container App secrets.
 4. **Check before deploying (changes nothing):**
    `.\infra\deploy-gateway.ps1 -ParametersFile infra\gateway.mycompany.json -Plan`
    Every line should be `[ OK ]`. A `[FAIL]` line prints how to fix it.
@@ -289,3 +277,4 @@ A 401 then a 2xx (the 401 was confirmed against the live gateway; the empty-list
 
 - No `/readyz` or startup config banner; use `/healthz` and the verifier.
 - The ACS Teams extension consent is a separate script and is not part of the deploy.
+
