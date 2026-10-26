@@ -105,6 +105,16 @@ az containerapp logs show -g <resource-group> -n my-gateway --tail 100 --format 
 
 You should see `event received type=Microsoft.Communication.IncomingCall` followed by the call being answered.
 
+### Step 6. Transfer to a rep needs a function tool on the voice agent
+
+The gateway runs the transfer, but the model only calls it if the voice agent declares a `transfer_to_rep` function tool (no parameters). Without it the model improvises, for example searching a toolbox for "transfer_to_rep", and the gateway never sees a transfer request (no `transfer_to_rep requested` in the log). The portal has no way to add a function tool, so use the script. It adds the tool and one instruction line, publishes a new version and verifies it:
+
+```powershell
+.\foundry\add-transfer-tool.ps1 -Endpoint https://<account>.services.ai.azure.com/api/projects/<project> -Agent <voice agent name>
+```
+
+Add `-WhatIf` to preview. Also make sure `transferTeamsObjectIds` is set in the settings file and `AFTER_HOURS` is not `on` (`/healthz` shows `transferTargets`). Test by calling and asking for a person: the log shows `transfer_to_rep requested`, then `timeline: transfer started`.
+
 ### If it does not work
 
 Run the read-only checker, then follow section 7:

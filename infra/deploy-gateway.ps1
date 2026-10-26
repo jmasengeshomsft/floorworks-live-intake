@@ -30,6 +30,7 @@ param(
   [string]$ImageTag = (Get-Date -Format 'yyyyMMdd-HHmm'),
   [switch]$SkipBuild,
   [switch]$Rebuild,
+  [switch]$RemoveOtherSubscriptions,
   [string]$UseImage,
   [switch]$Plan
 )
@@ -43,7 +44,7 @@ function az {
     foreach ($l in $o) {
       if ($l -is [System.Management.Automation.ErrorRecord]) {
         $m = "$l"
-        if ($m.Trim() -and $m -notmatch 'SyntaxWarning|^\s*pattern=|invalid escape|DeprecationWarning|^\s*[/|\\-]?\s*Running \.\.|behavior of this command has been altered') { [Console]::Error.WriteLine($m) }
+        if ($m.Trim() -and $m -notmatch 'SyntaxWarning|^System\.Management\.Automation\.RemoteException|^\s*pattern=|invalid escape|DeprecationWarning|^\s*[/|\\-]?\s*Running \.\.|behavior of this command has been altered') { [Console]::Error.WriteLine($m) }
       } else { $l }
     }
   } finally { $ErrorActionPreference = $ea }
@@ -227,11 +228,17 @@ if (-not $topic) {
 }
 $others = J (Az-Quiet eventgrid system-topic event-subscription list -g $rg --system-topic-name $topic -o json)
 foreach ($o in $others) {
+  $host_ = ''; try { $host_ = ([uri]$o.destination.endpointBaseUrl).Host } catch {}
+  Info "existing subscription '$($o.name)' -> $host_ ($($o.provisioningState))"
   if ($o.name -ne 'gateway-incoming' -and $o.filter.includedEventTypes -contains 'Microsoft.Communication.IncomingCall') {
-    Write-Host "  [WARN] subscription '$($o.name)' on this topic also receives IncomingCall. Two consumers will both try to answer; delete one." -ForegroundColor Yellow
+    Write-Host "  [WARN] subscription '$($o.name)' also receives IncomingCall. Two consumers will both try to answer." -ForegroundColor Yellow
+    $ans = if ($RemoveOtherSubscriptions) { 'y' } else { Read-Host "  Delete '$($o.name)' so this gateway is the only consumer? (y/N)" }
+    if ($ans -match '^[yY]') {
+      az eventgrid system-topic event-subscription delete -g $rg --system-topic-name $topic -n $o.name --yes --only-show-errors 2>$null | Out-Null
+      Ok "deleted '$($o.name)'"
+    }
   }
-}
-$endpoint = "https://$fqdn/api/incoming?s=$($sec['eventgrid-secret'])"
+}$endpoint = "https://$fqdn/api/incoming?s=$($sec['eventgrid-secret'])"
 # Event Grid validates the URL once; make sure the running revision already accepts this exact secret.
 $pre = '[{"id":"pre","topic":"t","subject":"s","eventType":"Microsoft.EventGrid.SubscriptionValidationEvent","eventTime":"2026-01-01T00:00:00Z","data":{"validationCode":"abc123"},"dataVersion":"2","metadataVersion":"1"}]'
 $accepted = $false; $lastCode = 0

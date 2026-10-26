@@ -34,7 +34,11 @@ def parse_agent_output(data: dict) -> dict:
                 text = c.get("text")
                 if text:
                     return parse_json_lenient(text)
-    raise ValueError("no message output from extractor agent")
+    items = [i.get("type") for i in data.get("output", [])]
+    err = data.get("error") or (data.get("incomplete_details") or {})
+    raise ValueError(
+        f"no message output from extractor agent (status={data.get('status')}, output_types={items}, detail={err})"
+    )
 
 
 def parse_json_lenient(text: str) -> dict:

@@ -22,7 +22,7 @@ function az {
     foreach ($l in $o) {
       if ($l -is [System.Management.Automation.ErrorRecord]) {
         $m = "$l"
-        if ($m.Trim() -and $m -notmatch 'SyntaxWarning|^\s*pattern=|invalid escape|DeprecationWarning|^\s*[/|\\-]?\s*Running \.\.|behavior of this command has been altered') { [Console]::Error.WriteLine($m) }
+        if ($m.Trim() -and $m -notmatch 'SyntaxWarning|^System\.Management\.Automation\.RemoteException|^\s*pattern=|invalid escape|DeprecationWarning|^\s*[/|\\-]?\s*Running \.\.|behavior of this command has been altered') { [Console]::Error.WriteLine($m) }
       } else { $l }
     }
   } finally { $ErrorActionPreference = $ea }
