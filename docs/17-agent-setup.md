@@ -1,5 +1,6 @@
 # 17 - Agent setup (`foundry/setup-agents.ps1`)
 
+> **Do this first, well before deploying the gateway.** Agent setup is step 1. The gateway deployment ([16](16-intake-gateway-deploy.md)) is already proven and does not change; it just needs the two agent names and the project endpoint that this script produces. Order: (1) edit the prompts, (2) run setup-agents.ps1, (3) run init-gateway-params.ps1 and deploy-gateway.ps1. Gateway deployed before the agents exist, or against agents that were not set up this way, means calls that stall on tool approval or cannot transfer.
 One script prepares a Foundry project for the intake gateway: the Dataverse connection, one shared toolbox, the note-taker agent and the voice agent. It reads everything back and proves that tool calls run **without approval**, because nobody can click "approve" during a phone call.
 
 Run it **before** the gateway ([16](16-intake-gateway-deploy.md)). It prints the agent names and project endpoint that the gateway settings need.
@@ -14,7 +15,46 @@ Run it **before** the gateway ([16](16-intake-gateway-deploy.md)). It prints the
 | Dataverse URL | `https://<org>.crm.dynamics.com`. Read from an existing connection when there is one, otherwise pass `-OrgUrl` |
 | Tools | PowerShell, Azure CLI (`az login`), `curl` |
 
-## Quick start
+## Prompts (configure these before you run the script)
+
+The agents' behavior lives in two prompt files, not in the script. **Review and edit them for your company and process first**, then run `setup-agents.ps1`. The script reads the files and publishes them as the agent instructions. To change behavior later, edit the file and re-run the script; it publishes a new agent version.
+
+| File | Agent | Controls |
+|---|---|---|
+| `foundry\prompts\voice-instructions.md` | Voice agent | Personality and tone, what the caller can ask, guardrails, language handling, when to call `transfer_to_rep` |
+| `foundry\prompts\notetaker-instructions.md` | Note-taker | The JSON the rep console receives: fields captured, priority values, matching rules, read-only rules |
+
+Use `-VoiceInstructionsFile` or `-NotetakerInstructionsFile` to point at your own copies instead.
+
+### Voice prompt: what to customize
+
+| Section | Customize |
+|---|---|
+| Personality | The assistant's name (`FloorWorks Assistant`) and company, plus the voice's grammatical gender if you change `-Voice` |
+| Environment | The Dataverse tables it may query (`bdm_equipment`, `bdm_part`, `bdm_qualityalert`, `bdm_serviceticket`). Change them if your data model differs |
+| Tone and Goal | Style, brevity, and what a resolved call looks like |
+| Guardrails | Scope, language rules, name handling, speech-recognition hints (for example "mail" for "mill") |
+| Human handoff | Keep the `transfer_to_rep` rule. Without it the agent cannot hand off |
+| Call context | Keep the rule that the voice agent never creates or updates records; a human rep submits the ticket |
+
+### Note-taker prompt: what to customize
+
+- **Fields:** `customer_name`, `phone`, `equipment_model`, `equipment_serial_or_asset`, `location`, `complaint`, `priority`, `preferred_time`, `summary`. The rep console and Dataverse draft columns map to these. If you add or rename a field, update the console and data model too ([05](05-data-model.md)).
+- **Priority values:** `Low | Medium | High | Critical`.
+- **Matching rules:** how it matches equipment, quality alerts and tickets from Dataverse (read-only).
+- **Part-number hints:** examples such as "HV 2020" meaning "HV-220".
+- **Enrichment block:** the section between `ENRICHMENT:BEGIN` and `ENRICHMENT:END` is included only with `-Enrichment on`.
+
+### Rules to keep
+
+- Keep the output JSON shape the gateway expects. The prompt's output template is a contract with the rep console.
+- Keep both agents **read-only**. Only the human rep creates tickets.
+- Keep the `transfer_to_rep` instruction in the voice prompt.
+- The prompts must not mention tool names that your toolbox does not expose (the default exposes `describe`, `read_query`, `search`).
+- Keep the files UTF-8.
+
+Check what you changed with `.\foundry\setup-agents.ps1 -Plan`, then run it for real. The portal shows each published version.
+## Quick start (after the prompts are ready)
 
 ```powershell
 az login
@@ -116,17 +156,6 @@ Passing a name (`-ConnectionName`, `-VoiceAgent`, `-NotetakerAgent`, `-ToolboxNa
 ### Picking and creating agents
 
 Agents are found by **kind** (`voice`, `prompt`), never by name. Each menu lists the existing agents in the project plus `[N] create new`. Choosing an existing agent adds a new version to it.
-
-## Prompts
-
-The instructions live in files, so you can change them without touching the script:
-
-| File | Agent |
-|---|---|
-| `foundry\prompts\voice-instructions.md` | Voice agent (greeting flow, what to collect, when to call `transfer_to_rep`) |
-| `foundry\prompts\notetaker-instructions.md` | Note-taker (structured JSON for the rep console). Its `ENRICHMENT:BEGIN/END` section is included only with `-Enrichment on` |
-
-Edit a file, then re-run the script to publish a new agent version.
 
 ## Enrichment (optional)
 
