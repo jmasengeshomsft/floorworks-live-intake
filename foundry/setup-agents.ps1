@@ -73,10 +73,18 @@ function Rest($method, $url, $tok, $body, $features, $accept = 'application/json
     [IO.File]::WriteAllText($bf, $txt)
     $a += @('--data-binary', "@$bf")
   }
-  $code = & curl.exe @a
+  $code = $null; $curlErr = ''
+  for ($try = 1; $try -le 4; $try++) {
+    $ef = [IO.Path]::GetTempFileName()
+    $code = & curl.exe -sS @a 2>$ef
+    $curlErr = ([IO.File]::ReadAllText($ef)).Trim(); Remove-Item $ef -ErrorAction SilentlyContinue
+    if ("$code" -ne '000' -and "$code" -ne '0' -and $code) { break }
+    Start-Sleep -Seconds (2 * $try)
+  }
   $text = [IO.File]::ReadAllText($out); $headers = [IO.File]::ReadAllText($hd)
   Remove-Item $out, $hd -ErrorAction SilentlyContinue; if ($bf) { Remove-Item $bf -ErrorAction SilentlyContinue }
   $json = $null; try { if ($text.Trim()) { $json = $text | ConvertFrom-Json } } catch {}
+  if ([int]$code -eq 0 -and $curlErr) { $text = "curl: $curlErr" }
   [pscustomobject]@{ Code = [int]$code; Json = $json; Text = $text; Headers = $headers }
 }
 function Pick($what, $items, $label) {
@@ -118,7 +126,7 @@ if (-not $FoundryProject) {
 $projArm = "$acctArm/projects/$FoundryProject"
 $ep = "https://$FoundryAccount.services.ai.azure.com/api/projects/$FoundryProject"
 $pr = Rest GET "https://management.azure.com$projArm`?api-version=$ArmApi" $arm
-if ($pr.Code -ne 200) { Problem "project '$FoundryProject' not readable (HTTP $($pr.Code))" "Check the name and that you have access to $FoundryAccount." }
+if ($pr.Code -ne 200) { Problem "project '$FoundryProject' not readable (HTTP $($pr.Code)$(if ($pr.Code -eq 0) { ': ' + $pr.Text }))" "Check the name and that you have access to $FoundryAccount." }
 else { Ok "project $FoundryProject on $FoundryAccount ($rg)" }
 $miObjectId = if ($pr.Json.identity) { $pr.Json.identity.principalId } else { $null }
 if (-not $miObjectId) { Problem 'project has no system-assigned managed identity' "Enable it: Foundry portal > project > Identity, or az resource update --ids $projArm --set identity.type=SystemAssigned" }
@@ -176,7 +184,7 @@ if (-not ($boundNames -contains 'ToolboxName')) {
 # Model deployments
 $dep = Rest GET "https://management.azure.com$acctArm/deployments?api-version=$ArmApi" $arm
 if ($dep.Code -ne 200) { Start-Sleep 3; $dep = Rest GET "https://management.azure.com$acctArm/deployments?api-version=$ArmApi" $arm }
-if ($dep.Code -ne 200) { Problem "could not list model deployments (HTTP $($dep.Code))" 'Check Reader access on the Foundry account and re-run.' }
+if ($dep.Code -ne 200) { Problem "could not list model deployments (HTTP $($dep.Code)$(if ($dep.Code -eq 0) { ': ' + $dep.Text }))" 'Check Reader access on the Foundry account and re-run.' }
 $deployed = @($dep.Json.value | ForEach-Object { [pscustomobject]@{ Name = $_.name; Model = $_.properties.model.name } })
 if ($NotetakerModel) {
   if ($deployed.Name -notcontains $NotetakerModel) { Problem "note-taker model deployment '$NotetakerModel' not found in $FoundryAccount" "Deployments: $($deployed.Name -join ', ')" }
