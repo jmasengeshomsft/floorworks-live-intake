@@ -109,6 +109,10 @@ $arm = Token 'https://management.azure.com'
 if (-not $FoundryProject) {
   $pl = Rest GET "https://management.azure.com$acctArm/projects?api-version=$ArmApi" $arm
   $names = @($pl.Json.value | ForEach-Object { ($_.name -split '/')[-1] })
+  if ($pl.Code -ne 200 -or $names.Count -eq 0) {
+    $why = if ($pl.Code -ne 200) { "the project list call failed (HTTP $($pl.Code)): $($pl.Text.Substring(0, [Math]::Min(200, $pl.Text.Length)))" } else { "the account has no projects visible to you" }
+    throw "No Foundry project found on '$FoundryAccount': $why. You need at least Reader on the account. Or pass -ProjectEndpoint https://$FoundryAccount.services.ai.azure.com/api/projects/<project> (copy it from the portal)."
+  }
   $FoundryProject = Pick 'Foundry project' $names { param($n) $n }
 }
 $projArm = "$acctArm/projects/$FoundryProject"
