@@ -26,10 +26,10 @@ param(
   [string]$FoundryProject,
   [string]$Subscription,
   [string]$OrgUrl,                          # https://<org>.crm.dynamics.com
-  [string]$VoiceAgent = 'floorworks-voice-agent-app',
-  [string]$NotetakerAgent = 'floorworks-notetaker',
+  [string]$VoiceAgent = 'intake-voice-agent',
+  [string]$NotetakerAgent = 'intake-note-taker',
   [string]$ToolboxName = 'floorworks-dataverse',
-  [string]$ConnectionName = 'dataverse-mfg-mi',
+  [string]$ConnectionName = 'dataverse-mi',
   [string]$NotetakerModel,                  # deployment name; chosen from the project's deployments when omitted
   [string]$VoiceModel = 'gpt-realtime-2.1',
   [string]$Voice = 'en-US-Ava:DragonHDLatestNeural',
@@ -123,7 +123,7 @@ else { Ok "project managed identity $miObjectId" }
 # Reuse or create: connection, agents, toolbox
 $boundNames = @($PSBoundParameters.Keys)
 function ChooseOrNew($label, $param, $existing, $default) {
-  if ($boundNames -contains $param -or $Plan) { return [pscustomobject]@{ Name = $default; IsNew = ($existing -notcontains $default) } }
+  if ($boundNames -contains $param) { return [pscustomobject]@{ Name = $default; IsNew = ($existing -notcontains $default) } }
   Write-Host "  $label" -ForegroundColor Cyan
   $i = 1; foreach ($e in $existing) { Write-Host "    [$i] reuse '$e' (adds a new version)"; $i++ }
   Write-Host "    [N] create new"

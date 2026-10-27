@@ -96,10 +96,10 @@ The voice agent is not probed by the script (it needs audio). A test call is the
 | `-ProjectEndpoint` | picked from menus | `https://<account>.services.ai.azure.com/api/projects/<project>`. Or use `-FoundryAccount` and `-FoundryProject` |
 | `-Subscription` | current | Azure subscription |
 | `-OrgUrl` | from the connection | Dataverse URL |
-| `-ConnectionName` | `dataverse-mfg-mi` | Connection to reuse or create. Also the tool name and label |
+| `-ConnectionName` | `dataverse-mi` | Connection to reuse or create. Also the tool name and label |
 | `-ToolboxName` | auto (by endpoint) | Override the toolbox name |
-| `-VoiceAgent` | `floorworks-voice-agent-app` | Voice agent name. Picked from voice agents in the project when omitted |
-| `-NotetakerAgent` | `floorworks-notetaker` | Note-taker name. Picked from prompt agents when omitted |
+| `-VoiceAgent` | `intake-voice-agent` | Voice agent name. Picked from voice agents in the project when omitted |
+| `-NotetakerAgent` | `intake-note-taker` | Note-taker name. Picked from prompt agents when omitted |
 | `-NotetakerModel` | chosen from deployments | Chat model deployment for the note-taker |
 | `-VoiceModel` | `gpt-realtime-2.1` | Voice model |
 | `-Voice`, `-Greeting` | `en-US-Ava:DragonHDLatestNeural`, a greeting | Voice and first sentence |
@@ -111,7 +111,7 @@ The voice agent is not probed by the script (it needs audio). A test call is the
 | `-ParamsFile` | none | Write the agent names and endpoint into a gateway settings file |
 | `-Plan` | off | Preflight only |
 
-Passing a name (`-ConnectionName`, `-VoiceAgent`, `-NotetakerAgent`, `-ToolboxName`) skips its prompt. `-Plan` never prompts.
+Passing a name (`-ConnectionName`, `-VoiceAgent`, `-NotetakerAgent`, `-ToolboxName`) skips its prompt. `-Plan` prompts the same way, then stops after preflight.
 
 ### Picking and creating agents
 
