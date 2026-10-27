@@ -73,7 +73,7 @@ $def = @{
   kind = 'prompt'; model = $Model
   instructions = (Get-Content (Join-Path $PSScriptRoot 'instructions.md') -Raw)
   reasoning = @{ effort = 'low' }
-  tools = @(@{ type = 'mcp'; server_label = 'dataverse-mfg'; server_url = "$OrgUrl/api/mcp"
+  tools = @(@{ type = 'mcp'; server_label = $ConnectionName; server_url = "$OrgUrl/api/mcp"
                require_approval = 'never'; project_connection_id = $ConnectionName })
 }
 $f = TmpJson @{ description = 'Live intake extractor (Dataverse MCP via project managed identity)'; definition = $def }

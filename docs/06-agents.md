@@ -11,7 +11,7 @@ Two Microsoft Foundry agents work every call. Neither can create a service ticke
 | Dataverse access | Via **toolbox** `floorworks-dataverse` | Via project connection `dataverse-mfg-mi` |
 | Can write Dataverse | No (instructions forbid it) | No (instructions forbid it) |
 | Special tool | `transfer_to_rep` | none |
-| Instructions | Managed in Foundry (versioned) | `foundry/notetaker-instructions.md` |
+| Instructions | Managed in Foundry (versioned) | `foundry/prompts/notetaker-instructions.md` |
 
 ## Receptionist (voice agent)
 
@@ -61,14 +61,14 @@ When it runs: after each recognized utterance (extract) and once more after the 
 
 ### Optional enrichment (Foundry IQ)
 
-With `ENRICHMENT=on` the note-taker also gets the `floorworks-kb` MCP tool (`knowledge_base_retrieve`, via project connection `floorworks-kb`; instructions from `foundry/notetaker-enrichment.md`). It returns a separate `enrichment` object (likely cause, bulletin, parts with unit cost, suggested priority and reason, diagnostic steps, sources) that never changes `fields`. Publish with `$env:ENRICHMENT='on'; foundry\publish-draft-flow-agents.ps1`. The knowledge base is built by the CLI in `foundry/` (see `foundry/README.md`). The voice agent has no enrichment.
+With `ENRICHMENT=on` the note-taker also gets the `floorworks-kb` MCP tool (`knowledge_base_retrieve`, via project connection `floorworks-kb`; instructions from `the ENRICHMENT section of foundry/prompts/notetaker-instructions.md`). It returns a separate `enrichment` object (likely cause, bulletin, parts with unit cost, suggested priority and reason, diagnostic steps, sources) that never changes `fields`. Publish with `$env:ENRICHMENT='on'; foundry\publish-draft-flow-agents.ps1`. The knowledge base is built by the CLI in `foundry/` (see `foundry/README.md`). The voice agent has no enrichment.
 
 ## Toolbox `floorworks-dataverse`
 
 A Foundry **toolbox** bundles tools for voice agents. This one exposes the Dataverse MCP server:
 
 ```json
-{ "tools": [ { "type": "mcp", "name": "dataverse-mfg", "server_label": "dataverse-mfg",
+{ "tools": [ { "type": "mcp", "name": "dataverse-mfg-mi", "server_label": "dataverse-mfg-mi",
                "server_url": "https://<org>.crm.dynamics.com/api/mcp",
                "project_connection_id": "dataverse-mfg-mi" } ] }
 ```
@@ -105,7 +105,7 @@ Notes for the REST API (`$ep` = project endpoint):
 
 ## Prompt-change checklist
 
-1. Edit instructions (note-taker: `foundry/notetaker-instructions.md`; receptionist: Foundry portal or the script).
+1. Edit instructions (note-taker: `foundry/prompts/notetaker-instructions.md`; receptionist: Foundry portal or the script).
 2. Publish a new version.
 3. Place a short test call, and confirm no service ticket row appears.
 4. Check the draft fields and `bdm_summary`.

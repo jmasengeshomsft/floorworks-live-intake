@@ -27,7 +27,7 @@ Full column reference and diagrams: [docs/05-data-model.md](../docs/05-data-mode
 
 - Add columns in the script with helpers `StrAttr`, `MemoAttr`, `IntAttr`, `DecAttr`, `DateAttr`, `PickAttr`; add lookups
   with `EnsureLookup`. Re-run the script.
-- Then update `src/VoiceIntake/Drafts.cs`, `RepUi.cs` and `foundry/notetaker-instructions.md` ([checklist](../docs/05-data-model.md#extending-the-model)).
+- Then update `src/VoiceIntake/Drafts.cs`, `RepUi.cs` and `foundry/prompts/notetaker-instructions.md` ([checklist](../docs/05-data-model.md#extending-the-model)).
 
 ## Related admin steps
 

@@ -152,4 +152,4 @@ value exists in the schema but nothing sets it yet (see the [roadmap](10-roadmap
 
 Add columns in `provision-dataverse.ps1` (the helpers `StrAttr`, `MemoAttr`, `PickAttr`, ... are idempotent), then update
 `DraftSelect` and `Update()` in `Drafts.cs`, the form in `RepUi.cs`, and the note-taker's output schema in
-`foundry/notetaker-instructions.md`.
+`foundry/prompts/notetaker-instructions.md`.

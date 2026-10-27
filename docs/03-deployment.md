@@ -81,7 +81,7 @@ azd env set REP_TEAMS_OBJECT_IDS <oid1,oid2>
 azd env set REP_KEY <shared-key>
 azd env set ENRICHMENT off                       # on after the Foundry IQ KB is built (foundry/README.md)
 azd env set CREATE_ACS true                       # self-contained: also create ACS (omit ACS_NAME)
-azd env set CREATE_FOUNDRY true                   # self-contained: also create Foundry account + project; then run foundry/create-agents.ps1
+azd env set CREATE_FOUNDRY true                   # self-contained: also create Foundry account + project; then run foundry/setup-agents.ps1
 azd env set DEPLOY_SEARCH true                   # Azure AI Search for Foundry IQ (false to reuse your own)
 azd env set RUNNER_PRINCIPAL_ID <your-user-object-id>   # optional: grants you the search roles to build the KB
 azd up

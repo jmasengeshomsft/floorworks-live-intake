@@ -65,12 +65,14 @@ Portal alternative: Foundry **Management center** > **Connected resources**. Lab
 ```json
 {
   "type": "mcp",
-  "server_label": "dataverse-mfg",
+  "server_label": "dataverse-mfg-mi",
   "server_url": "https://<org>.crm.dynamics.com/api/mcp",
   "require_approval": "never",
   "project_connection_id": "dataverse-mfg-mi"
 }
 ```
+
+> **Pre-approval.** Steps 1-4 do not pre-approve anything. Approval is a property of the agent's tool entry, and an MCP tool defaults to **approval required**, which hangs an unattended call ("pending user approval"). `"require_approval": "never"` above is what prevents it. If you use a toolbox, the toolbox's inner tool needs `never` as well, and `allowed_tools` limits what is exposed. `foundry\setup-agents.ps1` does all of this; see [17](17-agent-setup.md).
 
 ## Step 6: Test
 
@@ -101,4 +103,4 @@ The Microsoft Community Hub blog approach uses an app registration, client secre
 
 - Use the managed-identity connection for unattended agents such as voice.
 - Replace System Administrator with a least-privilege role before production.
-- Names (`dataverse-mfg-mi`, `dataverse-mfg`, `fw_foundryprojectmi`) are arbitrary; keep them consistent across the connection, tool and script.
+- Names (`dataverse-mfg-mi`, `dataverse-mfg`, `fw_foundryprojectmi`) are arbitrary; keep them consistent across the connection, tool and script. The tool name/label equals the connection name (`dataverse-mfg-mi`), so tools show as `dataverse-mfg-mi___<tool>`.

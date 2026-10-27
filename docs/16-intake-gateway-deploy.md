@@ -25,7 +25,7 @@ Teams number -> resource account -> ACS -> Event Grid -> intake gateway (Contain
 | Resource account **Object ID** | `(Get-CsOnlineApplicationInstance -Identity <upn>).ObjectId` |
 | Azure Communication Services (ACS) resource with Teams extension **consent** for that resource account | `init-gateway-params.ps1` prints `ACS consent exists`. If it warns, run `infra\grant-acs-consent.ps1` after the Teams admin step |
 | Bot / Entra app registration | Verified by your Teams admin (`infra\verify-bot.ps1`) |
-| Foundry project with the **voice agent** (and optionally the **note-taker** agent) | Both show in the Foundry portal |
+| Foundry project with the **voice agent** (and optionally the **note-taker** agent) | Both show in the Foundry portal. No agents yet? See [17](17-agent-setup.md). Run `foundry\setup-agents.ps1 -ProjectEndpoint <endpoint> -OrgUrl <dataverse url>` (add `-Plan` to only check). It creates the toolbox, note-taker and voice agent (with `transfer_to_rep`) and prints the names to use below |
 | Container Apps environment and Azure Container Registry (ACR) | Both exist in your subscription |
 
 Your Azure account needs **Contributor** (and permission to create role assignments, e.g. **Owner** or **User Access Administrator**) on the resource group.

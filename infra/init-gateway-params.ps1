@@ -133,12 +133,12 @@ Ok "endpoint $endpoint"
 
 $voice = ''; $extractor = ''
 $tok = Az-Quiet account get-access-token --resource https://ai.azure.com --query accessToken -o tsv
-$names = @()
+$names = @(); $kinds = @{}
 if ($tok) {
   for ($try = 1; $try -le 4 -and -not $names.Count; $try++) {
     try {
-      $r = Invoke-RestMethod "$endpoint/agents?api-version=v1" -Headers @{ Authorization = "Bearer $tok" } -TimeoutSec 90
-      $names = @($r.data | ForEach-Object { $_.name })
+      $r = Invoke-RestMethod "$endpoint/agents?api-version=v1" -Headers @{ Authorization = "Bearer $tok"; 'Foundry-Features' = 'VoiceAgents=V1Preview' } -TimeoutSec 90
+      $names = @($r.data | ForEach-Object { $_.name }); $kinds = @{}; foreach ($d in $r.data) { $kinds[$d.name] = "$($d.versions.latest.definition.kind)" }
       if (-not $names.Count) { break }
     } catch {
       $msg = $_.Exception.Message
@@ -148,28 +148,26 @@ if ($tok) {
   }
 }
 if ($names.Count) {
-  $voiceCand = @($names | Where-Object { $_ -match 'voice' })
+  $voiceCand = @($names | Where-Object { $kinds[$_] -eq 'voice' })
   if ($VoiceAgent) { $voiceCand = @($names | Where-Object { $_ -eq $VoiceAgent }) }
   $voice = Pick 'voice agent' $(if ($voiceCand.Count) { $voiceCand } else { $names }) { param($n) $n }
-  $exCand = @($names | Where-Object { $_ -match 'notetaker|extract' })
+  $exCand = @($names | Where-Object { $kinds[$_] -eq 'prompt' })
   if ($ExtractorAgent) {
     if ($names -notcontains $ExtractorAgent) { throw "Note-taker agent '$ExtractorAgent' not found in this project. Agents: $($names -join ', ')" }
     $extractor = $ExtractorAgent; Ok "note-taker / extractor agent : $extractor"
   } elseif ($NonInteractive) {
     if ($exCand.Count -eq 1) { $extractor = $exCand[0]; Ok "note-taker / extractor agent : $extractor" } else { Warn "No single note-taker agent found; live notes extraction is off. Pass -ExtractorAgent <name> to set it." }
   } else {
-    Write-Host "  Choose note-taker / extractor agent (the agent that turns the call into the service ticket) :"
-    for ($i = 0; $i -lt $names.Count; $i++) { Write-Host ("    [{0}] {1}{2}" -f ($i + 1), $names[$i], $(if ($exCand -contains $names[$i]) { '   (suggested)' } else { '' })) }
+    Write-Host "  Choose note-taker / extractor agent (prompt agents in this project) :"
+    $pool = if ($exCand.Count) { $exCand } else { $names }
+    for ($i = 0; $i -lt $pool.Count; $i++) { Write-Host ("    [{0}] {1}" -f ($i + 1), $pool[$i]) }
     Write-Host "    [0] none"
-    $def = if ($exCand.Count) { [array]::IndexOf($names, $exCand[0]) + 1 } else { 0 }
     while ($true) {
-      $a = Read-Host "  Number (Enter for $def)"
-      if (-not $a) { $a = "$def" }
+      $a = Read-Host "  Number"
       $n = -1
-      if ([int]::TryParse($a, [ref]$n) -and $n -ge 0 -and $n -le $names.Count) { if ($n -gt 0) { $extractor = $names[$n - 1] }; break }
+      if ([int]::TryParse($a, [ref]$n) -and $n -ge 0 -and $n -le $pool.Count) { if ($n -gt 0) { $extractor = $pool[$n - 1] }; break }
       Write-Host "  Enter a number from the list." -ForegroundColor Yellow
-    }
-    if ($extractor) { Ok "note-taker / extractor agent : $extractor" } else { Warn "No note-taker selected; the ticket will not be extracted from the call." }
+    }    if ($extractor) { Ok "note-taker / extractor agent : $extractor" } else { Warn "No note-taker selected; the ticket will not be extracted from the call." }
   }
 }
 if (-not $voice) {

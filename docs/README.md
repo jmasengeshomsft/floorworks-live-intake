@@ -16,6 +16,7 @@ Start here. Each section stands alone; read them in order for the full story, or
 | 10 | [Roadmap & known limits](10-roadmap.md) | know what is not done yet and what to build next |
 | 11 | [Demo guide](11-demo-guide.md) | run a clean demo, including a script and a recovery plan |
 | 16 | [Intake gateway: package, deploy, troubleshoot](16-intake-gateway-deploy.md) | deploy the Option A gateway and diagnose "Event Grid delivers but nothing happens" |
+| 17 | [Agent setup](17-agent-setup.md) | `foundry/setup-agents.ps1`: connection, shared toolbox, note-taker and voice agent with pre-approved tools |
 | — | [Glossary](glossary.md) | decode the acronyms (ACS, TPE, MCP, ...) |
 
 ## Repo map

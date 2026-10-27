@@ -17,10 +17,10 @@ function Publish($name, $mutate) {
 }
 
 if ($args[0] -ne 'voice-only') { Publish 'floorworks-notetaker' { param($d)
-  $ins = Get-Content (Join-Path $PSScriptRoot 'notetaker-instructions.md') -Raw
+  $ins = Get-Content (Join-Path $PSScriptRoot 'prompts\notetaker-instructions.md') -Raw
+  $ins = [regex]::Replace($ins, '(?s)<!-- ENRICHMENT:BEGIN.*?-->\r?\n(.*?)<!-- ENRICHMENT:END -->\r?\n?', $(if ($env:ENRICHMENT -eq 'on') { '$1' } else { '' }))
   if ($env:ENRICHMENT -eq 'on') {
     # Foundry IQ: note-taker only. The voice agent is never given the KB tool.
-    $ins += Get-Content (Join-Path $PSScriptRoot 'notetaker-enrichment.md') -Raw
     if (-not $env:SEARCH_SERVICE) { throw 'ENRICHMENT=on requires SEARCH_SERVICE (azd output)' }
     $kb = @{ type = 'mcp'; server_label = 'floorworks-kb'
       server_url = "https://$($env:SEARCH_SERVICE).search.windows.net/knowledgebases/floorworks-kb/mcp?api-version=2026-05-01-preview"
