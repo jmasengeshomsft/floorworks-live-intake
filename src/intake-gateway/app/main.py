@@ -12,6 +12,7 @@ from . import afterhours
 from .auth import make_dependency
 from .bridge import Gateway
 from .config import Settings, load_settings
+from .drafts import DraftError, DraftStore
 from .extractor import Extractor, TokenSource
 from .functions import FunctionRegistry
 from .security import AcsJwtVerifier, check_call_token, check_shared_secret, new_call_id, normalize_number
@@ -25,7 +26,7 @@ if not logging.getLogger().handlers:
 log = logging.getLogger("gateway")
 
 
-def create_app(settings: Settings | None = None, store: CallStore | None = None, acs=None, tokens=None) -> FastAPI:
+def create_app(settings: Settings | None = None, store: CallStore | None = None, acs=None, tokens=None, drafts_store=None) -> FastAPI:
     s = settings or load_settings()
     def _check_config():
         errors, warnings = report(s)
@@ -36,13 +37,18 @@ def create_app(settings: Settings | None = None, store: CallStore | None = None,
     cfg_errors, cfg_warnings = _check_config()
     store = store or MemoryStore()
     hub = EventHub()
-    if tokens is None and s.foundry_project_endpoint:
+    if tokens is None and (s.foundry_project_endpoint or s.dataverse_url):
         tokens = TokenSource(s.local_dev)
     if acs is None and s.acs_connection_string:
         from .acs import AcsClient
 
         acs = AcsClient(s)
     extractor = Extractor(s, hub, tokens)
+    drafts = drafts_store
+    if drafts is None and s.dataverse_url:
+        drafts = DraftStore(s, tokens)
+    if drafts is not None:
+        extractor.on_result = drafts.save_notes
     functions = FunctionRegistry(s)
     gw = Gateway(s, store, hub, extractor, functions, acs, tokens)
     acs_jwt = AcsJwtVerifier(s.acs_jwt_mode if s.local_dev else "enforce", s.acs_resource_id)
@@ -74,12 +80,13 @@ def create_app(settings: Settings | None = None, store: CallStore | None = None,
     if s.dev_simulator:
 
         @app.post("/v1/dev/simulate", dependencies=[auth])
-        async def simulate():
+        async def simulate(real: bool = False, phone: str = "+15550142"):
             from . import simulator
 
             st = store.get_or_create(new_call_id())
-            st.caller_phone = "+15550142"
-            asyncio.get_running_loop().create_task(simulator.run(st, hub))
+            st.caller_phone = phone
+            job = simulator.run_real(st, hub, extractor) if real else simulator.run(st, hub)
+            asyncio.get_running_loop().create_task(job)
             return st.summary()
 
     def need(call_id: str):
@@ -155,6 +162,8 @@ def create_app(settings: Settings | None = None, store: CallStore | None = None,
             "voiceAgent": s.voice_agent,
             "extractorAgent": s.extractor_agent,
             "enrichment": s.enrichment,
+            "drafts": drafts is not None,
+            "equipment": drafts is None or drafts.schema.enabled("bdm_equipments"),
             "liveNotes": gw.transcriber.name,
             "afterHoursMode": s.after_hours,
             "afterHoursNow": afterhours.is_active(s),
@@ -165,6 +174,59 @@ def create_app(settings: Settings | None = None, store: CallStore | None = None,
             "configWarnings": cfg_warnings,
             "schema": s.extraction_schema,
         }
+
+    # ---------------- draft / rep actions (Dataverse) ----------------
+
+    def need_drafts() -> DraftStore:
+        if drafts is None:
+            raise HTTPException(503, "drafts are not configured (set DATAVERSE_URL)")
+        return drafts
+
+    async def dv(coro):
+        try:
+            return await coro
+        except LookupError as e:
+            raise HTTPException(404, str(e))
+        except DraftError as e:
+            raise HTTPException(400, str(e))
+        except Exception as e:  # noqa: BLE001
+            log.warning("draft op failed: %s: %s", type(e).__name__, e)
+            raise HTTPException(502, "Dataverse request failed")
+
+    @app.get("/v1/drafts", dependencies=[auth])
+    async def list_drafts():
+        return await dv(need_drafts().list_drafts())
+
+    @app.get("/v1/tickets", dependencies=[auth])
+    async def list_tickets():
+        return await dv(need_drafts().list_tickets())
+
+    @app.get("/v1/customers", dependencies=[auth])
+    async def search_customers(q: str = ""):
+        return await dv(need_drafts().search_customers(q))
+
+    @app.get("/v1/equipment", dependencies=[auth])
+    async def list_equipment(customerId: str | None = None):
+        return await dv(need_drafts().list_equipment(customerId))
+
+    @app.get("/v1/drafts/{call_id}", dependencies=[auth])
+    async def get_draft(call_id: str):
+        st = store.get(call_id)
+        return await dv(need_drafts().get_detail(call_id, st.caller_phone if st else None))
+
+    @app.post("/v1/drafts/{call_id}", dependencies=[auth])
+    async def edit_draft(call_id: str, body: dict = Body(...)):
+        await dv(need_drafts().update(call_id, body))
+        return {"status": "ok"}
+
+    @app.post("/v1/drafts/{call_id}/customer", dependencies=[auth])
+    async def create_customer(call_id: str, body: dict = Body(...)):
+        await dv(need_drafts().create_customer(call_id, str(body.get("name", "")), body.get("phone")))
+        return {"status": "ok"}
+
+    @app.post("/v1/drafts/{call_id}/submit", dependencies=[auth])
+    async def submit_draft(call_id: str, body: dict = Body(default={})):
+        return {"ticket": await dv(need_drafts().submit(call_id, str(body.get("submittedBy") or "rep")))}
 
     @app.get("/v1/stats", dependencies=[auth])
     async def stats():

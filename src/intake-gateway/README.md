@@ -31,6 +31,24 @@ Auth: managed identity / `az login` (`LOCAL_DEV=1`) against `https://ai.azure.co
 | POST | /v1/calls/{id}/transfer, /hangup | actions |
 | POST | /v1/calls/{id}/functions/{fnCallId}/result | complete an async function call |
 | GET | /v1/functions, /v1/config | introspection |
+| GET | /v1/drafts, /v1/drafts/{id}, /v1/tickets, /v1/customers?q=, /v1/equipment?customerId= | Dataverse draft and lookups (503 unless `DATAVERSE_URL` is set) |
+| POST | /v1/drafts/{id}, /v1/drafts/{id}/customer, /v1/drafts/{id}/submit | rep edit, create customer, Submit (the only ticket creator) |
+
+Draft persistence: when `DATAVERSE_URL` is set, every extraction result upserts one `bdm_servicerequestdraft` per call
+(rep-edited fields are never overwritten; customer/equipment links are set only while empty). Agents stay read-only.
+
+`DraftStore` (`app/drafts.py`, the Python port of the C# draft store) is the only Dataverse writer:
+- `save_notes` runs after each extraction: creates the draft on first use, then refreshes agent fields, transcript, coaching and `bdm_enrichmentjson`. Fields listed in `bdm_editedfields` are skipped; the customer is auto-linked by caller phone only while empty.
+- `update` applies rep edits and marks them in `bdm_editedfields`; `create_customer` adds a customer and links it.
+- `submit` (rep click only) creates the ticket with the call details, summary and enrichment text, marks the draft Submitted and links the ticket. Drafts already submitted are read-only.
+- Customer suggestions rank by fuzzy name plus phone match; search accepts a name or phone digits.
+- Auth: managed identity (`DefaultAzureCredential`, scope `<DATAVERSE_URL>/.default`; `AzureCliCredential` when `LOCAL_DEV=1`). It needs a Dataverse application user with a role on the tables.
+- `DATAVERSE_PROFILE=cdm-account-case` writes to the standard `account` and `incident` tables (equipment stays free text).
+
+Custom Dataverse schema: table, column, lookup and option-set names default to FloorWorks `bdm_*`. Override only what
+differs with one JSON (`DATAVERSE_SCHEMA` inline or `b64:<base64>`, or `DATAVERSE_SCHEMA_FILE`); see `schema.example.json`
+and `app/schema.py`. Invalid JSON/unknown names fail startup validation. In `deploy-gateway.ps1` set `dataverseUrl` and
+`dataverseSchema` (an object) in the parameters file. A canonical name maps to one real name across all tables.
 
 Infra (no key): `POST /api/incoming`, `POST /api/callbacks/{id}`, `WS /ws/{id}`, `GET /healthz`.
 
@@ -41,7 +59,7 @@ curl -N -H "x-api-key: $K" http://localhost:8080/v1/calls/<id>/events
 
 ## Events
 `call.incoming`, `call.connected`, `transcript.line`, `extraction.updated`,
-`enrichment.updated`, `extraction.final`, `function.called`, `function.completed`,
+`enrichment.updated`, `draft.updated`, `extraction.final`, `function.called`, `function.completed`,
 `transfer.*`, `call.ended`, `error`.
 
 ## Webhooks

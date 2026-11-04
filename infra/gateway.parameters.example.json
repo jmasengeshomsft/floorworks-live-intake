@@ -14,6 +14,9 @@
   "corsOrigins": "",
   "liveNotes": "on",
   "enrichment": "off",
+  "dataverseUrl": "",
+  "dataverseProfile": "",
+  "dataverseSchema": {},
   "speechRegion": "",
   "speechKey": "",
   "apiKeys": ""

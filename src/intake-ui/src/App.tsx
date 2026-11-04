@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { GatewayClient, type CallSummary, type GatewayConfig, type Settings, type Stats } from './api'
+import {
+  GatewayClient,
+  type CallSummary,
+  type Customer,
+  type DraftDetail,
+  type Equipment,
+  type GatewayConfig,
+  type Settings,
+  type Stats,
+} from './api'
 import { useCall, type CallView } from './hooks'
 import './App.css'
 
@@ -208,6 +217,215 @@ function EnrichmentCard({ data, on }: { data: CallView['enrichment']; on: boolea
   )
 }
 
+const PRIORITIES = ['Low', 'Medium', 'High', 'Urgent']
+const prioLabel = (n?: number) => PRIORITIES[Math.min(Math.max((n ?? 105730001) - 105730000, 0), 3)]
+const TEXT_FIELDS: [string, string, string][] = [
+  ['customername', 'bdm_customername', 'Customer name'],
+  ['contactphone', 'bdm_contactphone', 'Contact phone'],
+  ['equipmenttext', 'bdm_equipmenttext', 'Equipment'],
+  ['assetnumber', 'bdm_assetnumber', 'Asset number'],
+  ['location', 'bdm_location', 'Location'],
+  ['preferredtime', 'bdm_preferredtime', 'Preferred time'],
+]
+
+function DraftCard({ client, id, tick, equipment }: { client: GatewayClient; id: string; tick: number; equipment: boolean }) {
+  const [d, setD] = useState<DraftDetail | null>(null)
+  const [form, setForm] = useState<Record<string, string>>({})
+  const dirty = useRef<Set<string>>(new Set())
+  const [equip, setEquip] = useState<Equipment[]>([])
+  const [q, setQ] = useState('')
+  const [found, setFound] = useState<Customer[]>([])
+  const [rep, setRep] = useState(() => localStorage.getItem('intake-ui.rep') ?? '')
+  const [msg, setMsg] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    dirty.current = new Set()
+    setD(null)
+    setForm({})
+    setMsg(null)
+  }, [id])
+
+  const load = useCallback(async () => {
+    try {
+      const r = await client.draft(id)
+      setD(r)
+      const row = r.draft
+      if (row)
+        setForm((f) => {
+          const n = { ...f }
+          const set = (k: string, v: string) => {
+            if (!dirty.current.has(k)) n[k] = v
+          }
+          for (const [k, col] of TEXT_FIELDS) set(k, String((row as unknown as Record<string, unknown>)[col] ?? ''))
+          set('complaint', row.bdm_complaint ?? '')
+          set('priority', prioLabel(row.bdm_priority))
+          return n
+        })
+    } catch (e) {
+      if (!String(e).startsWith('Error: 404')) setMsg(String(e))
+      else setD(null)
+    }
+  }, [client, id])
+
+  useEffect(() => {
+    void load()
+  }, [load, tick])
+
+  const customerId = d?.draft?._bdm_customerid_value ?? null
+  useEffect(() => {
+    if (equipment) client.equipment(customerId).then(setEquip).catch(() => setEquip([]))
+  }, [client, customerId, equipment])
+
+  if (!d?.draft) return msg ? <section className="card"><h3>Draft</h3><div className="error">{msg}</div></section> : null
+  const row = d.draft
+  const submitted = row.bdm_status === 105730001
+  const edit = (k: string, v: string) => {
+    dirty.current.add(k)
+    setForm((f) => ({ ...f, [k]: v }))
+  }
+  const run = async (fn: () => Promise<unknown>, ok?: string) => {
+    setBusy(true)
+    setMsg(null)
+    try {
+      await fn()
+      if (ok) setMsg(ok)
+      await load()
+    } catch (e) {
+      setMsg(String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const body = () => Object.fromEntries([...dirty.current].map((k) => [k, form[k]]))
+  const save = () => run(async () => {
+    await client.saveDraft(id, body())
+    dirty.current = new Set()
+  }, 'Saved')
+  const apply = () => {
+    const e = d.enrichment as Record<string, unknown> | null
+    if (!e) return
+    if (typeof e.suggested_priority === 'string' && PRIORITIES.includes(e.suggested_priority)) edit('priority', e.suggested_priority)
+    const parts = Array.isArray(e.parts) ? (e.parts as Record<string, unknown>[]) : []
+    if (parts.length) {
+      const txt = 'Parts to check: ' + parts.map((p) => `${p.number ?? ''} ${p.name ?? ''}`.trim()).join('; ')
+      if (!(form.complaint ?? '').includes(txt)) edit('complaint', [form.complaint, txt].filter(Boolean).join('\n'))
+    }
+  }
+  const submit = () => run(async () => {
+    if (dirty.current.size) {
+      await client.saveDraft(id, body())
+      dirty.current = new Set()
+    }
+    localStorage.setItem('intake-ui.rep', rep)
+    const r = await client.submitDraft(id, rep || 'rep')
+    setMsg(`Created ticket ${r.ticket}`)
+  })
+  const pick = (c: Customer) => run(() => client.saveDraft(id, { customerId: c.bdm_customerid }))
+  const cands = d.candidates ?? []
+
+  return (
+    <section className="card draft">
+      <h3>
+        Service request draft{' '}
+        {submitted ? <span className="chip">Submitted{row.bdm_submittedby ? ` by ${row.bdm_submittedby}` : ''}</span> : <span className="chip warn">Draft</span>}
+      </h3>
+      {d.ticket && <p>Ticket: <strong>{d.ticket}</strong></p>}
+      {row.bdm_coaching && !submitted && <p className="muted">Ask next: {row.bdm_coaching}</p>}
+      <div className="kv">
+        <dt>Customer record</dt>
+        <dd>
+          {d.customer ? (
+            <>
+              {d.customer.bdm_name} <span className="muted">{d.customer.bdm_accountnumber}</span>
+            </>
+          ) : (
+            <span className="muted">Not linked</span>
+          )}
+        </dd>
+      </div>
+      {!submitted && !d.customer && (
+        <>
+          {cands.map((c) => (
+            <div key={c.bdm_customerid} className="row">
+              <span>{c.bdm_name} <span className="muted">{c.bdm_primaryphone} {c.why ? `· ${c.why}` : ''}</span></span>
+              <button disabled={busy} onClick={() => pick(c)}>Use</button>
+            </div>
+          ))}
+          <div className="row">
+            <input placeholder="Search name or phone" value={q} onChange={(e) => setQ(e.target.value)} />
+            <button disabled={busy || !q.trim()} onClick={() => client.customers(q).then(setFound).catch((e) => setMsg(String(e)))}>Search</button>
+            <button
+              disabled={busy || !(form.customername ?? '').trim()}
+              onClick={() => run(() => client.createCustomer(id, form.customername, form.contactphone), 'Customer created')}
+            >
+              Create "{form.customername}"
+            </button>
+          </div>
+          {found.map((c) => (
+            <div key={c.bdm_customerid} className="row">
+              <span>{c.bdm_name} <span className="muted">{c.bdm_primaryphone}</span></span>
+              <button disabled={busy} onClick={() => pick(c)}>Use</button>
+            </div>
+          ))}
+        </>
+      )}
+      {equipment && (
+      <div className="kv">
+        <dt>Equipment record</dt>
+        <dd>
+          <select
+            disabled={submitted || busy}
+            value={row._bdm_equipmentid_value ?? ''}
+            onChange={(e) => e.target.value && run(() => client.saveDraft(id, { equipmentId: e.target.value }))}
+          >
+            <option value="">{equip.length ? 'Select equipment…' : 'No equipment found'}</option>
+            {equip.map((e) => (
+              <option key={e.bdm_equipmentid} value={e.bdm_equipmentid}>
+                {e.bdm_name} {e.bdm_assetnumber ? `(${e.bdm_assetnumber})` : ''}
+              </option>
+            ))}
+          </select>
+        </dd>
+      </div>
+      )}
+      {d.enrichment && !submitted && (
+        <div className="ai-apply">
+          <button disabled={busy} onClick={apply}>Apply AI priority &amp; parts</button>
+          <small className="muted"> Copies into the form; you still press Submit.</small>
+        </div>
+      )}
+      {TEXT_FIELDS.map(([k, , lab]) => (
+        <label key={k} className="kv">
+          <dt>{lab}</dt>
+          <dd><input disabled={submitted} value={form[k] ?? ''} onChange={(e) => edit(k, e.target.value)} /></dd>
+        </label>
+      ))}
+      <label className="kv">
+        <dt>Priority</dt>
+        <dd>
+          <select disabled={submitted} value={form.priority ?? 'Medium'} onChange={(e) => edit('priority', e.target.value)}>
+            {PRIORITIES.map((p) => <option key={p}>{p}</option>)}
+          </select>
+        </dd>
+      </label>
+      <label className="kv">
+        <dt>Issue</dt>
+        <dd><textarea rows={4} disabled={submitted} value={form.complaint ?? ''} onChange={(e) => edit('complaint', e.target.value)} /></dd>
+      </label>
+      {row.bdm_summary && <p className="muted">Summary: {row.bdm_summary}</p>}
+      {!submitted && (
+        <div className="row">
+          <input placeholder="Your name" value={rep} onChange={(e) => setRep(e.target.value)} />
+          <button disabled={busy || dirty.current.size === 0} onClick={save}>Save</button>
+          <button className="go" disabled={busy || !customerId || (equipment && !row._bdm_equipmentid_value)} onClick={submit}>Submit ticket</button>
+        </div>
+      )}
+      {msg && <small className="muted">{msg}</small>}
+    </section>
+  )
+}
+
 function FunctionsCard({
   fns,
   onResult,
@@ -321,6 +539,7 @@ function CallPanel({
         <div className="stack">
           <FieldsCard fields={v.fields} schema={config?.schema ?? {}} />
           <EnrichmentCard data={v.enrichment} on={!!config?.enrichment || !!config?.simulator} />
+          {config?.drafts && <DraftCard client={client} id={id} equipment={config.equipment !== false} tick={v.events.filter((e) => e.type === 'draft.updated').length} />}
           <FunctionsCard fns={v.functions} onResult={(fnId, body) => client.functionResult(id, fnId, body).then(() => undefined)} />
         </div>
       </div>

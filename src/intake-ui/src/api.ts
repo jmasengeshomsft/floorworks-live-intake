@@ -38,10 +38,54 @@ export interface CallDetail extends CallSummary {
   enrichment: Enrichment | null
 }
 
+export interface Customer {
+  bdm_customerid: string
+  bdm_name: string
+  bdm_accountnumber?: string
+  bdm_primaryphone?: string
+  why?: string
+}
+
+export interface Equipment {
+  bdm_equipmentid: string
+  bdm_name: string
+  bdm_assetnumber?: string
+  bdm_manufacturer?: string
+}
+
+export interface DraftRow {
+  bdm_callid: string
+  bdm_status: number
+  bdm_priority?: number
+  bdm_customername?: string
+  bdm_contactphone?: string
+  bdm_equipmenttext?: string
+  bdm_assetnumber?: string
+  bdm_location?: string
+  bdm_preferredtime?: string
+  bdm_complaint?: string
+  bdm_summary?: string
+  bdm_coaching?: string
+  bdm_submittedby?: string
+  _bdm_customerid_value?: string | null
+  _bdm_equipmentid_value?: string | null
+}
+
+export interface DraftDetail {
+  callId: string
+  draft: DraftRow | null
+  customer: Customer | null
+  candidates: Customer[] | null
+  ticket: string | null
+  enrichment: Enrichment | null
+}
+
 export interface GatewayConfig {
   voiceAgent: string
   extractorAgent: string
   enrichment: boolean
+  drafts?: boolean
+  equipment?: boolean
   liveNotes: string
   afterHoursMode: string
   afterHoursNow: boolean
@@ -99,6 +143,17 @@ export class GatewayClient {
   transfer = (id: string) => this.req<unknown>(`/v1/calls/${id}/transfer`, { method: 'POST' })
   hangup = (id: string) => this.req<unknown>(`/v1/calls/${id}/hangup`, { method: 'POST' })
   simulate = () => this.req<CallSummary>('/v1/dev/simulate', { method: 'POST' })
+  draft = (id: string) => this.req<DraftDetail>(`/v1/drafts/${id}`)
+  drafts = () => this.req<DraftRow[]>('/v1/drafts')
+  customers = (q: string) => this.req<Customer[]>(`/v1/customers?q=${encodeURIComponent(q)}`)
+  equipment = (customerId?: string | null) =>
+    this.req<Equipment[]>(`/v1/equipment${customerId ? `?customerId=${encodeURIComponent(customerId)}` : ''}`)
+  saveDraft = (id: string, body: Record<string, unknown>) =>
+    this.req<unknown>(`/v1/drafts/${id}`, { method: 'POST', body: JSON.stringify(body) })
+  createCustomer = (id: string, name: string, phone?: string) =>
+    this.req<unknown>(`/v1/drafts/${id}/customer`, { method: 'POST', body: JSON.stringify({ name, phone }) })
+  submitDraft = (id: string, submittedBy: string) =>
+    this.req<{ ticket: string }>(`/v1/drafts/${id}/submit`, { method: 'POST', body: JSON.stringify({ submittedBy }) })
   functionResult = (id: string, fnId: string, body: unknown) =>
     this.req<unknown>(`/v1/calls/${id}/functions/${fnId}/result`, {
       method: 'POST',
@@ -120,6 +175,7 @@ export const EVENT_TYPES = [
   'extraction.updated',
   'extraction.final',
   'enrichment.updated',
+  'draft.updated',
   'function.called',
   'transfer.started',
   'transfer.succeeded',

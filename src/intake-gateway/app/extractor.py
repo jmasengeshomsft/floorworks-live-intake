@@ -22,8 +22,8 @@ class TokenSource:
     def __init__(self, local_dev: bool):
         self._cred = AzureCliCredential() if local_dev else DefaultAzureCredential()
 
-    async def get(self) -> str:
-        return (await asyncio.to_thread(self._cred.get_token, SCOPE)).token
+    async def get(self, scope: str = SCOPE) -> str:
+        return (await asyncio.to_thread(self._cred.get_token, scope)).token
 
 
 def parse_agent_output(data: dict) -> dict:
@@ -104,6 +104,7 @@ class Extractor:
         self.s = settings
         self.hub = hub
         self.tokens = tokens
+        self.on_result = None  # async (st, result) -> None; persists the draft
 
     async def _invoke(self, payload: dict, timeout_s: float) -> dict:
         tok = await self.tokens.get()  # type: ignore[union-attr]
@@ -152,6 +153,14 @@ class Extractor:
             enr = normalize_enrichment(enr)
             st.enrichment = enr
             self.hub.publish(st.call_id, "enrichment.updated", enr)
+        if self.on_result is not None:
+            try:
+                await self.on_result(st, result)
+            except Exception as e:  # noqa: BLE001
+                log.warning("[%s] draft save failed: %s: %s", st.call_id, type(e).__name__, e)
+                self.hub.publish(st.call_id, "error", {"stage": "draft", "message": str(e)})
+            else:
+                self.hub.publish(st.call_id, "draft.updated", {"mode": mode})
 
     def trigger(self, st: CallState) -> None:
         if self.tokens is None or not self.s.extractor_agent:

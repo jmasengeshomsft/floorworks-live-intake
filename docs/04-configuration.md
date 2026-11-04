@@ -21,6 +21,21 @@
 | `LOCAL_DEV` | No | unset | `1` uses `AzureCliCredential` instead of managed identity. Local runs only |
 | `ENRICHMENT` | No | `off` | `on` enables Foundry IQ enrichment: the note-taker (not the voice agent) queries the `floorworks-kb` knowledge base and returns an "AI suggested" block shown on the rep console and appended to the ticket notes. `off` leaves the flow unchanged. Requires the `bdm_enrichmentjson` column and the note-taker published with `$env:ENRICHMENT='on'` |
 
+### Intake gateway: Dataverse drafts
+
+| Variable | Required | Default | Meaning |
+|---|---|---|---|
+| `DATAVERSE_URL` | No | empty | Turns on draft persistence and rep Submit (the gateway writes `bdm_servicerequestdraft` rows and tickets). Unset: `/v1/drafts` etc. return 503 |
+| `DATAVERSE_PROFILE` | No | `floorworks` | `cdm-account-case` uses the standard `account` (customers) and `incident` (tickets) tables and treats equipment as free text; the schema override below is merged on top |
+| `DATAVERSE_SCHEMA` | No | empty | Partial JSON (inline or `b64:<base64>`) renaming tables, columns, lookups and option values (`names`, per-table `columns`, `disabled`, `options`, `tableOptions`). Omitted keys keep the profile values |
+| `DATAVERSE_SCHEMA_FILE` | No | empty | Same JSON read from a file; `DATAVERSE_SCHEMA` wins if both are set |
+
+Override shape (see `src/intake-gateway/schema.example.json`):
+`{"names": {"bdm_callid": "acme_callref", "bdm_CustomerId": "acme_Customer"}, "options": {"status": {"draft": 1, "submitted": 2}}}`.
+Keys under `names` are the canonical `bdm_*` table, column or lookup navigation names (case-sensitive; the lookup
+`bdm_CustomerId` is separate from the column `bdm_customerid`). Invalid JSON or unknown names fail startup. The deploy
+script takes `dataverseUrl` and a `dataverseSchema` object.
+
 Store `ACS_CONNECTION_STRING`, `SPEECH_KEY` and `REP_KEY` as Container Apps **secrets** and reference them with
 `secretref:`. Never commit them.
 

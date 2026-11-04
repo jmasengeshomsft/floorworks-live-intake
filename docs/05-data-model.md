@@ -117,6 +117,32 @@ Choice columns use the publisher base value **105730000** plus the index.
 
 The note-taker speaks *Low / Medium / High / Critical*; the app maps these to Low / Normal / High / Urgent.
 
+## Using different table or column names
+
+The intake gateway does not hardcode the `bdm_*` names at the Dataverse boundary. A customer whose environment uses
+other names supplies a partial JSON override (`DATAVERSE_SCHEMA` / `DATAVERSE_SCHEMA_FILE`, see
+[04](04-configuration.md)) mapping each canonical name above (tables, columns, lookup navigation properties such as
+`bdm_CustomerId`) and optionally the status and priority option values. Lookup value columns
+(`_bdm_customerid_value`) follow the renamed lookup. One canonical name maps to one real name across all tables.
+The required columns and relationships are unchanged; only the names differ. A `columns` section scopes a mapping to one
+table (so `bdm_name` can be `name` on customers and `title` on tickets), and `null` marks a column that does not exist.
+
+### Standard tables (account and Case)
+
+Set `DATAVERSE_PROFILE=cdm-account-case` to use common data model tables instead of the custom ones:
+
+| FloorWorks | Standard | Notes |
+|---|---|---|
+| `bdm_customers` | `account` | `name`, `accountnumber`, `telephone1`, `emailaddress1`, `address1_*`; no first or last name (name search uses `name`) |
+| `bdm_servicetickets` | `incident` | `title`, `description`, `prioritycode`, customer via `customerid_account`; no status or opened-on columns |
+| `bdm_equipments` | none | disabled: equipment stays free text on the draft and is written into the case description; the UI hides the equipment picker |
+| Priority | `prioritycode` | Low 3, Normal 2, High 1; Urgent collapses to High (Case has no Urgent) |
+
+Create the draft table with lookups to `account` and `incident` using
+`dataverse\provision-dataverse.ps1 -OrgUrl <org> -StandardTables` (no custom customer, ticket or equipment tables, and no
+seed data). Caller phone matching reads `telephone1`, so keep account phone numbers filled in. A field-service
+customer asset table could be mapped later by overriding `names` and removing `bdm_equipments` from `disabled`.
+
 ## Seed data
 
 | Equipment | Asset # | Plant | Status |

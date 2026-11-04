@@ -318,6 +318,12 @@ $tbv = (Rest GET "$ep/toolboxes/$ToolboxName/versions/$($tb.version)?api-version
 if (@($tbv.tools | Where-Object { $_.type -eq 'mcp' -and $_.require_approval -ne 'never' }).Count) { Problem 'a tool inside the toolbox still requires approval' $null; $bad++ } else { Ok 'toolbox tools never wait for approval' }
 $n = (Rest GET "$ep/agents/$NotetakerAgent`?api-version=v1" $ft $null 'VoiceAgents=V1Preview').Json.versions.latest.definition
 $needsApproval = @($n.tools | Where-Object { $_.require_approval -ne 'never' })
+$ntToolboxUrl = "$ep/toolboxes/$ToolboxName/versions/$($tb.version)/mcp?api-version=v1"
+$ntDirect = @($n.tools | Where-Object { $_.project_connection_id -eq $ConnectionName -or "$($_.server_url)" -eq "$OrgUrl/api/mcp" })
+$ntViaToolbox = @($n.tools | Where-Object { "$($_.server_url)" -eq $ntToolboxUrl })
+if ($n.kind -ne 'prompt') { Problem "agent '$NotetakerAgent' is not a prompt agent (kind: $($n.kind))" 'Pick a different note-taker or create a new one.'; $bad++ }
+elseif ($ntDirect.Count -or -not $ntViaToolbox.Count) { Problem "note-taker '$NotetakerAgent' does not use the toolbox MCP endpoint (direct Dataverse tool: $($ntDirect.Count), toolbox entry: $($ntViaToolbox.Count))" "Expected server_url $ntToolboxUrl and no direct Dataverse tool. Re-run the script."; $bad++ }
+else { Ok "note-taker uses the toolbox MCP endpoint (toolbox $ToolboxName v$($tb.version)) and no direct Dataverse tool" }
 if ($needsApproval.Count) { Problem 'a note-taker tool still requires approval (the agent would stop waiting for it)' $null; $bad++ } else { Ok 'note-taker tools never wait for approval' }
 $rpc = Rest POST "$ep/toolboxes/$ToolboxName/versions/$($tb.version)/mcp?api-version=v1" $ft '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' 'Toolboxes=V1Preview' 'application/json, text/event-stream'
 if ($rpc.Code -eq 200 -and $rpc.Text -match '"tools"') {

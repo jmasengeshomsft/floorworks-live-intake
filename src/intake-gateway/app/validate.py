@@ -57,6 +57,13 @@ def validate(s: Settings) -> tuple[list[str], list[str]]:
             errors.append(f"Webhook URL {u.split('?')[0]} {p}.")
     if not s.transfer_teams_ids:
         warnings.append("TRANSFER_TEAMS_OBJECT_IDS not set: transfer to a rep is unavailable.")
+    if s.dataverse_url or s.dataverse_schema or s.dataverse_schema_file or s.dataverse_profile:
+        from .schema import Schema, SchemaError
+
+        try:
+            Schema.load(s.dataverse_schema, s.dataverse_schema_file, s.dataverse_profile)
+        except SchemaError as e:
+            errors.append(f"Dataverse schema: {e}")
     if s.live_notes:
         if s.speech_auth == "aad":
             if not s.speech_resource_id:

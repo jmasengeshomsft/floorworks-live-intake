@@ -170,6 +170,9 @@ $plain = [ordered]@{
   LINE_NUMBERS              = ($lines -join ',')
   TRANSFER_TEAMS_OBJECT_IDS = $p.transferTeamsObjectIds
   SPEECH_REGION             = $p.speechRegion
+  DATAVERSE_URL             = $p.dataverseUrl
+  DATAVERSE_PROFILE         = $(if ($p.dataverseProfile) { [string]$p.dataverseProfile } else { '' })
+  DATAVERSE_SCHEMA          = $(if ($p.dataverseSchema) { 'b64:' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($p.dataverseSchema | ConvertTo-Json -Depth 8 -Compress))) } else { '' })
 }
 $envVars = @()
 foreach ($k in $plain.Keys) { if ("$($plain[$k])".Trim()) { $envVars += "$k=$($plain[$k])" } }

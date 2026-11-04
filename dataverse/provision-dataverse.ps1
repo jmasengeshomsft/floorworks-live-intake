@@ -7,7 +7,9 @@
   [Parameter(Mandatory)][string]$OrgUrl,
   [string]$Prefix = 'bdm',
   [int]$OptionPrefix = 10573,
-  [string]$Solution = 'BlueDotMfgQuality'
+  [string]$Solution = 'BlueDotMfgQuality',
+  # Use the standard account and incident tables: creates only the draft table, with lookups to them, and no seed data
+  [switch]$StandardTables
 )
 $ErrorActionPreference = 'Stop'
 $api = "$OrgUrl/api/data/v9.2"
@@ -89,12 +91,12 @@ function EnsureTable($name, $display, $plural, $desc, $nameLabel, $attrs) {
     }
   }
 }
-function EnsureLookup($from, $to, $schema, $label) {
+function EnsureLookup($from, $to, $schema, $label, $toLogical = "${Prefix}_$to") {
   $rel = "${Prefix}_${to}_${from}_$($schema.ToLower())"
   if (-not (Exists "RelationshipDefinitions(SchemaName='$rel')")) {
     Dv POST RelationshipDefinitions @{
       '@odata.type' = 'Microsoft.Dynamics.CRM.OneToManyRelationshipMetadata'; SchemaName = $rel
-      ReferencedEntity = "${Prefix}_$to"; ReferencingEntity = "${Prefix}_$from"
+      ReferencedEntity = $toLogical; ReferencingEntity = "${Prefix}_$from"
       Lookup = @{ AttributeType = 'Lookup'; AttributeTypeName = @{ Value = 'LookupType' }; SchemaName = "${Prefix}_$schema"; DisplayName = (L $label); RequiredLevel = (Req) }
       AssociatedMenuConfiguration = @{ Behavior = 'UseCollectionName'; Group = 'Details'; Order = 10000 }
       CascadeConfiguration = @{ Assign = 'NoCascade'; Delete = 'RemoveLink'; Merge = 'NoCascade'; Reparent = 'NoCascade'; Share = 'NoCascade'; Unshare = 'NoCascade' }
@@ -104,6 +106,7 @@ function EnsureLookup($from, $to, $schema, $label) {
 }
 
 # ---------- Tables ----------
+if (-not $StandardTables) {
 EnsureTable 'equipment' 'Equipment' 'Equipment' 'Manufacturing equipment / assets on the plant floor' 'Equipment Name' @(
   (StrAttr 'assetnumber' 'Asset Number' 50), (StrAttr 'plant' 'Plant' 100), (StrAttr 'manufacturer' 'Manufacturer' 100),
   (PickAttr 'status' 'Status' @('Operational', 'Degraded', 'Down', 'Under Maintenance')), (DateAttr 'installdate' 'Install Date' $true))
@@ -127,6 +130,8 @@ EnsureTable 'customer' 'Customer' 'Customers' 'Customer account that calls in fo
   (StrAttr 'primaryphone' 'Primary Phone' 30), (StrAttr 'email' 'Email Address' 200), (StrAttr 'street' 'Street' 200),
   (StrAttr 'city' 'City' 100), (StrAttr 'state' 'State' 50), (StrAttr 'zip' 'Zip' 20))
 
+}
+
 EnsureTable 'servicerequestdraft' 'Service Request Draft' 'Service Request Drafts' 'Live draft built by the agents during a call; the rep submits it to create the service ticket' 'Draft Title' @(
   (StrAttr 'callid' 'Call ID' 100), (StrAttr 'callerphone' 'Caller Phone' 30), (StrAttr 'customername' 'Customer Name (heard)' 200),
   (StrAttr 'equipmenttext' 'Equipment (heard)' 200), (MemoAttr 'complaint' 'Complaint' 4000),
@@ -137,6 +142,12 @@ EnsureTable 'servicerequestdraft' 'Service Request Draft' 'Service Request Draft
   (StrAttr 'contactphone' 'Contact Phone' 30), (StrAttr 'assetnumber' 'Asset Number' 100), (StrAttr 'location' 'Location' 200),
   (StrAttr 'preferredtime' 'Preferred Time' 200), (StrAttr 'editedfields' 'Rep-edited fields' 300), (MemoAttr 'enrichmentjson' 'Enrichment (AI suggested)' 100000))
 
+if ($StandardTables) {
+  EnsureLookup 'servicerequestdraft' 'account' 'CustomerId' 'Customer' 'account'
+  EnsureLookup 'servicerequestdraft' 'incident' 'TicketId' 'Case' 'incident'
+  Write-Host 'Standard tables mode: draft table ready (lookups to account and incident). Run the gateway with DATAVERSE_PROFILE=cdm-account-case.'
+  return
+}
 EnsureLookup 'equipment' 'customer' 'CustomerId' 'Customer'
 EnsureLookup 'servicerequestdraft' 'customer' 'CustomerId' 'Customer'
 EnsureLookup 'servicerequestdraft' 'equipment' 'EquipmentId' 'Equipment'

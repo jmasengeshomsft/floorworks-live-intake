@@ -46,6 +46,10 @@ class Settings:
     extraction_schema: dict = field(default_factory=dict)
     enrichment: bool = False
     enrichment_interval_s: int = 60
+    dataverse_url: str = ""
+    dataverse_schema: str = ""
+    dataverse_schema_file: str = ""
+    dataverse_profile: str = ""
 
     # transfer / after hours
     transfer_teams_ids: list[str] = field(default_factory=list)
@@ -122,6 +126,10 @@ def load_settings() -> Settings:
         extraction_schema=schema,
         enrichment=_env("ENRICHMENT", "off").lower() == "on",
         enrichment_interval_s=int(_env("ENRICHMENT_INTERVAL_S", "60")),
+        dataverse_url=_env("DATAVERSE_URL"),
+        dataverse_schema=_env("DATAVERSE_SCHEMA"),
+        dataverse_schema_file=_env("DATAVERSE_SCHEMA_FILE"),
+        dataverse_profile=_env("DATAVERSE_PROFILE"),
         transfer_teams_ids=_list("TRANSFER_TEAMS_OBJECT_IDS"),
         after_hours=_env("AFTER_HOURS", "off").lower(),
         service_days=_env("SERVICE_DAYS", "Mon-Fri"),
