@@ -201,9 +201,8 @@ Status: tested twice against a real subscription (a from-scratch create of a new
 | `lineNumbers` | no | Allow-list; see pitfall below |
 | `transferTeamsObjectIds` | no | Entra object ids of transfer targets |
 | `corsOrigins`, `liveNotes`, `enrichment` | no | UI and feature toggles |
-| `dataverseUrl` | no | Dataverse org URL; enables draft persistence and rep Submit. The gateway identity needs a Dataverse application user with a role on the `bdm_*` tables, and `bdm_enrichmentjson` must exist if `enrichment` is on |
-| `dataverseProfile` | no | `cdm-account-case` to use the standard account and incident tables (sets `DATAVERSE_PROFILE`) |
-| `dataverseSchema` | no | Object of partial overrides for table/column/option names; the script base64-encodes it into `DATAVERSE_SCHEMA` (see [04](04-configuration.md)) |
+| `dataverseUrl` | no | Dataverse org URL; enables draft persistence and rep Submit. `deploy-gateway.ps1` registers the gateway identity as a Dataverse application user (System Administrator) for you; and `bdm_enrichmentjson` must exist if `enrichment` is on |
+| `dataverseSchema` | no | Leave empty: the deploy script then reads `dataverse\config.json` and sets it as the `DATAVERSE_SCHEMA` env var (base64). An object here replaces the file. See [18](18-table-configuration.md) |
 | `speechRegion`, `speechKey` | no | Live notes (STT) |
 | `apiKeys` | no | Generated if blank |
 

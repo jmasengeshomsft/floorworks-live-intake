@@ -22,6 +22,7 @@ from .schema import OPT_BASE, Schema
 log = logging.getLogger("gateway.drafts")
 
 DRAFT = "bdm_servicerequestdrafts"
+CONTACT_SELECT = "bdm_contactid,bdm_name,bdm_firstname,bdm_lastname,bdm_primaryphone,bdm_email,_bdm_customerid_value"
 CUST_SELECT = "bdm_customerid,bdm_name,bdm_accountnumber,bdm_firstname,bdm_lastname,bdm_primaryphone,bdm_email,bdm_street,bdm_city,bdm_state,bdm_zip"
 EDITABLE = {
     "customername": "bdm_customername",
@@ -117,7 +118,7 @@ def _sim(a: str, b: str) -> float:
     return max(s, 0.85) if _soundex(a) == _soundex(b) else s
 
 
-def rank_customers(customers: list[dict], name: str | None, phones: list[str | None]) -> list[dict]:
+def rank_customers(customers: list[dict], name: str | None, phones: list[str | None], phone_cols=("bdm_primaryphone",)) -> list[dict]:
     """Rank customers against a possibly misheard name and any phone numbers from the call."""
     tokens = [t for t in re.split(r"[ ,.]+", name or "") if any(c.isalpha() for c in t)]
     tails = {d[-10:] for d in (_digits(p) for p in phones) if len(d) >= 10}
@@ -126,8 +127,7 @@ def rank_customers(customers: list[dict], name: str | None, phones: list[str | N
         first, last = c.get("bdm_firstname") or "", c.get("bdm_lastname") or ""
         words = [first, last] if (first or last) else [w for w in re.split(r"[ ,.]+", c.get("bdm_name") or "") if w]
         ns = sum(max((_sim(t, w) for w in words), default=0.0) for t in tokens) / len(tokens) if tokens else 0.0
-        ph = _digits(c.get("bdm_primaryphone"))
-        hit = len(ph) >= 10 and ph[-10:] in tails
+        hit = any(len(ph) >= 10 and ph[-10:] in tails for ph in (_digits(c.get(col)) for col in phone_cols))
         if ns >= 0.6 or hit:
             why = "name + phone match" if hit and ns >= 0.6 else "phone match" if hit else "similar name"
             scored.append((ns + (0.6 if hit else 0), why, c))
@@ -143,18 +143,45 @@ class DraftStore:
         self._tokens = tokens
         self._http = client or httpx.AsyncClient(timeout=60)
         self._lock = asyncio.Lock()
-        self.schema = schema or         Schema.load(settings.dataverse_schema, settings.dataverse_schema_file, settings.dataverse_profile)
-        self._cust: tuple[float, list[dict]] | None = None
+        self._schema_lock = asyncio.Lock()
+        self.brand = settings.brand_name
+        self._resolved = schema is not None
+        self._set_schema(schema or Schema.load(settings.dataverse_schema, settings.dataverse_schema_file))
+
+    def _set_schema(self, schema: Schema) -> None:
+        self.schema = schema
+        self.phone_cols = ["bdm_primaryphone"] + schema.phone_columns
+        self.cust_select = CUST_SELECT + "".join("," + c for c in schema.phone_columns)
+        self.contact_phone_cols = ["bdm_primaryphone"] + schema.contact_phone_columns
+        self.contact_select = CONTACT_SELECT + "".join("," + c for c in schema.contact_phone_columns)
+
+    async def _ensure_schema(self) -> None:
+        if self._resolved or not self.schema.roles:
+            return
+        async with self._schema_lock:
+            if not self._resolved:
+                from .discover import resolve_schema
+
+                tok = await self._tokens.get(self.org + "/.default")
+                self._set_schema(await resolve_schema(self.schema, self._http, self.org, tok))
+                self._resolved = True
+
+    @property
+    def schema_hash(self) -> str:
+        return self.schema.hash
 
     def _draft_select(self) -> str:
         cols = ("bdm_servicerequestdraftid,bdm_name,bdm_callid,bdm_callerphone,bdm_customername,bdm_equipmenttext,bdm_complaint,"
                 "bdm_priority,bdm_summary,bdm_transcript,bdm_coaching,bdm_status,bdm_submittedby,bdm_submittedon,bdm_contactphone,"
                 "bdm_assetnumber,bdm_location,bdm_preferredtime,bdm_editedfields,createdon,_bdm_customerid_value,"
                 "_bdm_equipmentid_value,_bdm_ticketid_value")
+        if self.schema.contacts:
+            cols += ",_bdm_contactid_value"
         # the column only exists after re-running dataverse\provision-dataverse.ps1
         return cols + (",bdm_enrichmentjson" if self.enrichment else "")
 
     async def _send(self, method: str, path: str, body: dict | None = None, want_id: bool = False) -> Any:
+        await self._ensure_schema()
         tok = await self._tokens.get(self.org + "/.default")
         r = await self._http.request(
             method,
@@ -184,11 +211,40 @@ class DraftStore:
         d = _digits(phone)[-10:]
         if len(d) < 7:
             return None, None
-        rows = await self._rows(
-            f"bdm_customers?$select=bdm_customerid,bdm_name,bdm_primaryphone&$filter=contains(bdm_primaryphone,'{d[-4:]}')&$top=50"
-        )
-        hits = [r for r in rows if _digits(r.get("bdm_primaryphone")).endswith(d[-7:])]
+        rows = await self._rows(f"bdm_customers?$select={self.cust_select}&$filter={self._phone_filter(d[-4:])}&$top=50")
+        hits = [r for r in rows if any(_digits(r.get(c)).endswith(d[-7:]) for c in self.phone_cols)]
         return (hits[0]["bdm_customerid"], hits[0].get("bdm_name")) if len(hits) == 1 else (None, None)
+
+    async def match_contact(self, phone: str) -> dict | None:
+        """The one contact whose mobile/direct line matches the caller's number (None when absent or ambiguous)."""
+        d = _digits(phone)[-10:]
+        if not self.schema.contacts or len(d) < 7:
+            return None
+        flt = "(" + " or ".join(f"contains({c},'{d[-4:]}')" for c in self.contact_phone_cols) + ")"
+        rows = await self._rows(f"bdm_contacts?$select={self.contact_select}&$filter={flt}&$top=50")
+        hits = [r for r in rows if any(_digits(r.get(c)).endswith(d[-7:]) for c in self.contact_phone_cols)]
+        return hits[0] if len(hits) == 1 else None
+
+    async def match_caller(self, phone: str) -> dict:
+        """Who is calling: the matching contact (and its parent account) first, then an account's own phone."""
+        contact = await self.match_contact(phone)
+        parent = (contact or {}).get("_bdm_customerid_value")
+        if contact and parent:
+            cust = await self.get_customer(parent)
+            if cust:
+                return {"customerId": parent, "customerName": cust.get("bdm_name"), "contactId": contact["bdm_contactid"], "contactName": contact.get("bdm_name")}
+        cid, cname = await self.match_customer(phone)
+        return {"customerId": cid, "customerName": cname, "contactId": None, "contactName": None}
+
+    async def get_contact(self, contact_id: str) -> dict | None:
+        if not self.schema.contacts:
+            return None
+        return await self._send("GET", f"bdm_contacts({_esc(contact_id)})?$select={self.contact_select}")
+
+    async def list_contacts(self, customer_id: str | None) -> list[dict]:
+        if not self.schema.contacts or not customer_id:
+            return []
+        return await self._rows(f"bdm_contacts?$select={self.contact_select}&$filter=_bdm_customerid_value eq {_esc(customer_id)}&$top=50")
 
     async def save_notes(self, st, result: dict | None) -> None:
         """Create the draft on first use, then refresh the agent-owned fields.
@@ -228,9 +284,12 @@ class DraftStore:
                 body["bdm_priority"] = priority_opt(None)
 
             if draft is None or draft.get("_bdm_customerid_value") is None:
-                cid, cname = await self.match_customer(st.caller_phone)
+                who = await self.match_caller(st.caller_phone)
+                cid, cname = who["customerId"], who["customerName"]
                 if cid:
                     body["bdm_CustomerId@odata.bind"] = f"/bdm_customers({cid})"
+                if who["contactId"] and not (draft or {}).get("_bdm_contactid_value"):
+                    body["bdm_ContactId@odata.bind"] = f"/bdm_contacts({who['contactId']})"
                 if (
                     cname
                     and "customername" not in edited
@@ -259,13 +318,23 @@ class DraftStore:
             else:
                 await self._send("PATCH", f"{DRAFT}({draft['bdm_servicerequestdraftid']})", body)
 
-    async def _all_customers(self) -> list[dict]:
-        if self._cust is None or time.time() - self._cust[0] > 30:
-            self._cust = (time.time(), await self._rows(f"bdm_customers?$select={CUST_SELECT}&$top=500"))
-        return self._cust[1]
+    def _phone_filter(self, digits: str) -> str:
+        return "(" + " or ".join(f"contains({c},'{digits}')" for c in self.phone_cols) + ")"
+
+    def _name_filter(self, tokens: list[str]) -> str:
+        cols = ["bdm_name"] + (["bdm_firstname", "bdm_lastname"] if self.schema.supports("bdm_customers", "bdm_firstname") else [])
+        return "(" + " or ".join(f"contains({c},'{_esc(t)}')" for t in tokens for c in cols) + ")"
 
     async def suggest_customers(self, name: str | None, phones: list[str | None]) -> list[dict]:
-        return rank_customers(await self._all_customers(), name, phones)
+        """Server-side candidate query (phone tails and name fragments), then fuzzy ranking in memory."""
+        parts = [self._phone_filter(d[-4:]) for d in {_digits(p) for p in phones} if len(d) >= 10]
+        tokens = [t[:3] for t in re.split(r"[ ,.]+", name or "") if len(t) >= 3 and any(c.isalpha() for c in t)]
+        if tokens:
+            parts.append(self._name_filter(tokens))
+        if not parts:
+            return []
+        rows = await self._rows(f"bdm_customers?$select={self.cust_select}&$filter={' or '.join(parts)}&$top=100")
+        return rank_customers(rows, name, phones, self.phone_cols)
 
     async def search_customers(self, q: str) -> list[dict]:
         q = q.strip()
@@ -273,15 +342,14 @@ class DraftStore:
         if len(d) < 4 and any(c.isalpha() for c in q):
             return await self.suggest_customers(q, [])
         if len(d) >= 4:
-            flt = f"contains(bdm_primaryphone,'{d}')"
-        elif self.schema.supports("bdm_customers", "bdm_firstname"):
-            flt = " and ".join(f"(contains(bdm_firstname,'{_esc(w)}') or contains(bdm_lastname,'{_esc(w)}'))" for w in q.split()) or "bdm_customerid ne null"
-        else:
-            flt = " and ".join(f"contains(bdm_name,'{_esc(w)}')" for w in q.split()) or "bdm_customerid ne null"
-        return await self._rows(f"bdm_customers?$select={CUST_SELECT}&$filter={flt}&$top=15")
+            rows = await self._rows(f"bdm_customers?$select={self.cust_select}&$filter={self._phone_filter(d[-4:])}&$top=50")
+            return [r for r in rows if any(d in _digits(r.get(c)) for c in self.phone_cols)][:15]
+        words = q.split()
+        flt = " and ".join(self._name_filter([w]) for w in words) or "bdm_customerid ne null"
+        return await self._rows(f"bdm_customers?$select={self.cust_select}&$filter={flt}&$top=15")
 
     async def get_customer(self, cid: str) -> dict | None:
-        return await self._send("GET", f"bdm_customers({_esc(cid)})?$select={CUST_SELECT}")
+        return await self._send("GET", f"bdm_customers({_esc(cid)})?$select={self.cust_select}")
 
     async def list_equipment(self, customer_id: str | None) -> list[dict]:
         if not self.schema.enabled("bdm_equipments"):
@@ -315,13 +383,16 @@ class DraftStore:
             candidates = await self.suggest_customers(
                 (d or {}).get("bdm_customername"), [(d or {}).get("bdm_contactphone"), (d or {}).get("bdm_callerphone") or live_phone]
             )
+        contact = None
+        if d and d.get("_bdm_contactid_value"):
+            contact = await self.get_contact(d["_bdm_contactid_value"])
         enr = None
         if self.enrichment and d and d.get("bdm_enrichmentjson"):
             try:
                 enr = json.loads(d["bdm_enrichmentjson"])
             except ValueError:
                 pass
-        return {"callId": call_id, "draft": d, "customer": customer, "candidates": candidates, "ticket": ticket, "enrichment": enr}
+        return {"callId": call_id, "draft": d, "customer": customer, "candidates": candidates, "contact": contact, "ticket": ticket, "enrichment": enr}
 
     async def _open_draft(self, call_id: str) -> dict:
         d = await self.find_draft(call_id)
@@ -340,6 +411,8 @@ class DraftStore:
                 nm = ((await self.get_customer(edit["customerId"])) or {}).get("bdm_name")
                 if nm:
                     b["bdm_customername"] = nm
+        if edit.get("contactId") and self.schema.contacts:
+            b["bdm_ContactId@odata.bind"] = f"/bdm_contacts({edit['contactId']})"
         if edit.get("equipmentId"):
             b["bdm_EquipmentId@odata.bind"] = f"/bdm_equipments({edit['equipmentId']})"
         edited = {x for x in (d.get("bdm_editedfields") or "").split(",") if x}
@@ -368,14 +441,13 @@ class DraftStore:
             "bdm_customers",
             {
                 "bdm_name": full_name.upper(),
-                "bdm_accountnumber": f"FW-{datetime.now(timezone.utc):%y%m%d%H%M%S}",
+                "bdm_accountnumber": f"NEW-{datetime.now(timezone.utc):%y%m%d%H%M%S}",
                 "bdm_firstname": parts[0],
                 "bdm_lastname": parts[1] if len(parts) > 1 else "",
                 "bdm_primaryphone": phone or "",
             },
             want_id=True,
         )
-        self._cust = None
         await self._send("PATCH", f"{DRAFT}({d['bdm_servicerequestdraftid']})", {"bdm_CustomerId@odata.bind": f"/bdm_customers({cid})"})
 
     async def submit(self, call_id: str, submitted_by: str) -> str:
@@ -386,13 +458,16 @@ class DraftStore:
             cust, eq = d.get("_bdm_customerid_value"), d.get("_bdm_equipmentid_value")
             if not cust or (equip and not eq):
                 raise DraftError("choose a customer and equipment first" if equip else "choose a customer first")
+            contact_id = d.get("_bdm_contactid_value")
+            contact = (await self.get_contact(contact_id) if contact_id else None) or {}
             cinfo = (await self.get_customer(cust)) or {}
             acct = cinfo.get("bdm_accountnumber") or cinfo.get("bdm_name") or "NA"
             now = datetime.now(timezone.utc)
-            title = f"FloorWorks-Voice-{acct}-{now:%Y%m%d%H%M}"
+            title = f"{self.brand}-Voice-{acct}-{now:%Y%m%d%H%M}"
             lines = [
                 f"Call ID: {call_id}",
                 f"Customer: {d.get('bdm_customername') or ''}",
+                *([f"Caller: {contact['bdm_name']}"] if contact.get("bdm_name") else []),
                 f"Contact phone: {d.get('bdm_contactphone') or d.get('bdm_callerphone') or ''}",
                 f"Equipment: {d.get('bdm_equipmenttext') or ''} {d.get('bdm_assetnumber') or ''}".rstrip(),
                 f"Location: {d.get('bdm_location') or ''}",
@@ -407,20 +482,36 @@ class DraftStore:
                 et = enrichment_text(d.get("bdm_enrichmentjson"))
                 if et:
                     lines += ["", et]
+            full = "\n".join(lines)
+            cap = self.schema.description_max
+            overflow = bool(cap) and len(full) > cap
+            if overflow:
+                tail = "\n[truncated - full notes in the attached note]" if self.schema.note_bind else "\n[truncated]"
+                full_text, full = full, full[: cap - len(tail)] + tail
             tid = await self._send(
                 "POST",
                 "bdm_servicetickets",
                 {
                     "bdm_name": title,
-                    "bdm_description": "\n".join(lines),
+                    "bdm_description": full,
                     "bdm_priority": d.get("bdm_priority") or OPT_BASE + 1,
                     "bdm_status": OPT_BASE,
                     "bdm_openedon": now.isoformat(),
                     "bdm_EquipmentId@odata.bind": f"/bdm_equipments({eq})" if eq else None,
                     "bdm_CustomerId@odata.bind": f"/bdm_customers({cust})",
+                    **({"bdm_ContactId@odata.bind": f"/bdm_contacts({contact_id})"} if contact_id else {}),
                 },
                 want_id=True,
             )
+            if overflow and self.schema.note_bind:
+                try:
+                    await self._send(
+                        "POST",
+                        "annotations",
+                        {"subject": "Call notes", "notetext": full_text, f"{self.schema.note_bind}@odata.bind": f"/{self.schema.real_table('bdm_servicetickets')}({tid})"},
+                    )
+                except RuntimeError as e:
+                    log.warning("could not attach full notes to the ticket: %s", e)
             await self._send(
                 "PATCH",
                 f"{DRAFT}({d['bdm_servicerequestdraftid']})",

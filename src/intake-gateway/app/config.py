@@ -49,8 +49,7 @@ class Settings:
     dataverse_url: str = ""
     dataverse_schema: str = ""
     dataverse_schema_file: str = ""
-    dataverse_profile: str = ""
-
+    brand_name: str = "Intake"  # prefix of generated ticket titles
     # transfer / after hours
     transfer_teams_ids: list[str] = field(default_factory=list)
     after_hours: str = "off"  # on | off | auto
@@ -129,7 +128,7 @@ def load_settings() -> Settings:
         dataverse_url=_env("DATAVERSE_URL"),
         dataverse_schema=_env("DATAVERSE_SCHEMA"),
         dataverse_schema_file=_env("DATAVERSE_SCHEMA_FILE"),
-        dataverse_profile=_env("DATAVERSE_PROFILE"),
+        brand_name=_env("BRAND_NAME", "Intake"),
         transfer_teams_ids=_list("TRANSFER_TEAMS_OBJECT_IDS"),
         after_hours=_env("AFTER_HOURS", "off").lower(),
         service_days=_env("SERVICE_DAYS", "Mon-Fri"),

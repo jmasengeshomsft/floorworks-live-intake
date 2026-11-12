@@ -76,6 +76,14 @@ foreach ($k in 'subscriptionId','resourceGroup','appName','acrName','environment
 }
 $rg = $p.resourceGroup; $app = $p.appName
 
+# The shared Dataverse config (dataverse\config.json) stays out of the image: deploy resolves it here and sends only the
+# schema/profile settings. Parameters override the file.
+$dvConfigFile = Join-Path $PSScriptRoot '..\dataverse\config.json'
+$dvSchema = $p.dataverseSchema
+if ((-not $dvSchema -or -not @($dvSchema.PSObject.Properties).Count) -and (Test-Path $dvConfigFile)) {
+  $dvSchema = Get-Content $dvConfigFile -Raw | ConvertFrom-Json
+}
+
 Step "Preflight"
 if (-not (Az-Quiet account show -o tsv)) { throw "Not signed in. Run: az login" }
 az account set --subscription $p.subscriptionId
@@ -171,8 +179,8 @@ $plain = [ordered]@{
   TRANSFER_TEAMS_OBJECT_IDS = $p.transferTeamsObjectIds
   SPEECH_REGION             = $p.speechRegion
   DATAVERSE_URL             = $p.dataverseUrl
-  DATAVERSE_PROFILE         = $(if ($p.dataverseProfile) { [string]$p.dataverseProfile } else { '' })
-  DATAVERSE_SCHEMA          = $(if ($p.dataverseSchema) { 'b64:' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($p.dataverseSchema | ConvertTo-Json -Depth 8 -Compress))) } else { '' })
+  BRAND_NAME                = $(if ($p.brandName) { [string]$p.brandName } else { '' })
+  DATAVERSE_SCHEMA          = $(if ($dvSchema -and @($dvSchema.PSObject.Properties).Count) { 'b64:' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($dvSchema | ConvertTo-Json -Depth 8 -Compress))) } else { '' })
 }
 $envVars = @()
 foreach ($k in $plain.Keys) { if ("$($plain[$k])".Trim()) { $envVars += "$k=$($plain[$k])" } }
@@ -201,6 +209,34 @@ az containerapp registry set -g $rg -n $app --server "$($p.acrName).azurecr.io" 
 if ($foundry) {
   Info "granting 'Foundry User' (Azure AI User) on Foundry account $fHost"
   Grant $principal '53ca6127-db72-4b80-b1b0-d745d6d5456d' $foundry.id 'Foundry User (Azure AI User)'
+}
+# Dataverse application user for the app identity (idempotent). Without it every /v1 call returns 403.
+if ($p.dataverseUrl) {
+  Info "registering the app identity as a Dataverse application user on $($p.dataverseUrl)"
+  try {
+    $appId = ("$(az ad sp show --id $principal --query appId -o tsv)").Trim()
+    $tok = ("$(az account get-access-token --resource $($p.dataverseUrl) --query accessToken -o tsv)").Trim()
+    if (-not $appId -or -not $tok) { throw "could not resolve the app id or a Dataverse token" }
+    $dvh = @{ Authorization = "Bearer $tok"; Accept = 'application/json'; 'Content-Type' = 'application/json' }
+    $dvApi = "$($p.dataverseUrl.TrimEnd('/'))/api/data/v9.2"
+    $dvUser = (Invoke-RestMethod "$dvApi/systemusers?`$filter=applicationid eq $appId&`$select=systemuserid" -Headers $dvh).value
+    if ($dvUser) { $dvUserId = $dvUser[0].systemuserid; Ok "Dataverse application user already exists" }
+    else {
+      $bu = (Invoke-RestMethod "$dvApi/businessunits?`$filter=parentbusinessunitid eq null&`$select=businessunitid" -Headers $dvh).value[0].businessunitid
+      $resp = Invoke-WebRequest "$dvApi/systemusers" -Method Post -Headers $dvh -UseBasicParsing `
+        -Body (@{ applicationid = $appId; 'businessunitid@odata.bind' = "/businessunits($bu)" } | ConvertTo-Json)
+      $dvUserId = ($resp.Headers['OData-EntityId'] -replace '.*\(|\).*', '')
+      Ok "created Dataverse application user"
+    }
+    $roleId = (Invoke-RestMethod "$dvApi/roles?`$filter=name eq 'System Administrator'&`$select=roleid" -Headers $dvh).value[0].roleid
+    try {
+      Invoke-RestMethod "$dvApi/systemusers($dvUserId)/systemuserroles_association/`$ref" -Method Post -Headers $dvh `
+        -Body (@{ '@odata.id' = "$dvApi/roles($roleId)" } | ConvertTo-Json) | Out-Null
+    } catch { if ("$($_.ErrorDetails.Message)" -notmatch 'duplicate|already') { throw } }
+    Ok "Dataverse role System Administrator assigned"
+  } catch {
+    Problem "Could not register the app identity in Dataverse: $($_.Exception.Message)" "Sign in as a Dataverse admin and register application id of principal $principal (System Administrator); /v1 returns 403 until then."
+  }
 }
 az containerapp secret set -g $rg -n $app --secrets @secretArgs --only-show-errors | Out-Null
 $fqdn = az containerapp show -g $rg -n $app --query properties.configuration.ingress.fqdn -o tsv

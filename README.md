@@ -38,7 +38,7 @@ operations and troubleshooting, security, roadmap and glossary.
 | Path | Purpose |
 |---|---|
 | [`src/VoiceIntake`](src/README.md) | **The product**: call handling, speech, agents, draft store, Rep Console |
-| [`dataverse/`](dataverse/README.md) | Schema and seed script for the manufacturing data |
+| [`dataverse/`](dataverse/README.md) | Schema and seed script, and `config.json`, the single file that chooses the tables for the gateway and agents ([how it works](docs/18-table-configuration.md)) |
 | [`foundry/`](foundry/README.md) | Agent instructions, publishing and Foundry-to-Dataverse wiring |
 | [`infra/`](infra/README.md) | Deployment and Azure telephony setup |
 | [`teams/`](teams/README.md) | Teams number and rep enablement |

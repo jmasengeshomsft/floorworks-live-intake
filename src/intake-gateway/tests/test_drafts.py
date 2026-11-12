@@ -2,9 +2,11 @@ import asyncio
 import json
 from urllib.parse import unquote
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Settings
+from tests.cfgfiles import cfg, raw
 from app.drafts import OPT_BASE, DraftStore, priority_opt, rank_customers
 from app.main import create_app
 from app.state import CallState
@@ -65,7 +67,7 @@ class FakeDataverse:
 
 
 def mkstore(dv, **kw):
-    s = Settings(dataverse_url="https://org.crm.dynamics.com", **kw)
+    s = Settings(dataverse_url="https://org.crm.dynamics.com", dataverse_schema=raw("floorworks"), brand_name="FloorWorks", **kw)
     return DraftStore(s, Tokens(), httpx.AsyncClient(transport=httpx.MockTransport(dv)))
 
 
@@ -141,3 +143,29 @@ def test_routes():
     off = TestClient(create_app(Settings(local_dev=True)))
     assert off.get("/v1/drafts").status_code == 503
     assert off.get("/v1/config").json()["drafts"] is False
+
+@pytest.mark.parametrize("stored", ["4056029804", "(405) 602-9804", "405-602-9804", "+1 405 602 9804", "405.602.9804"])
+def test_phone_formats_match(stored):
+    async def run():
+        dv = FakeDataverse()
+        dv.customers[0]["bdm_primaryphone"] = stored
+        ds = mkstore(dv)
+        for caller in ("+14056029804", "(405) 602-9804", "4056029804"):
+            cid, _name = await ds.match_customer(caller)
+            assert cid == "c1", (stored, caller)
+
+    asyncio.run(run())
+
+
+def test_render_prompt_from_config():
+    from app.render_prompts import render, values
+    from app.schema import Schema
+
+    v = values(Schema(cfg("cdm")), "Acme")
+    out = render("{{ASSISTANT_NAME}}: {{CUSTOMER_TABLE}} {{PHONE_COLUMNS}}", v)
+    assert out == "Acme Assistant: account telephone1, telephone2, telephone3"
+    assert "account: Customers" in v["SCHEMA_NOTES"] and len(v["CONFIG_HASH"]) == 12
+    import pytest as _p
+
+    with _p.raises(SystemExit):
+        render("{{NOPE}}", v)

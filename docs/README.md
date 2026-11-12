@@ -17,6 +17,7 @@ Start here. Each section stands alone; read them in order for the full story, or
 | 11 | [Demo guide](11-demo-guide.md) | run a clean demo, including a script and a recovery plan |
 | 16 | [Intake gateway: package, deploy, troubleshoot](16-intake-gateway-deploy.md) | deploy the Option A gateway and diagnose "Event Grid delivers but nothing happens" |
 | 17 | [Agent setup](17-agent-setup.md) | `foundry/setup-agents.ps1`: connection, shared toolbox, note-taker and voice agent with pre-approved tools |
+| 18 | [Table configuration](18-table-configuration.md) | choose the Dataverse tables once in `dataverse/config.json` and see how the provisioner, gateway and agents follow it |
 | — | [Glossary](glossary.md) | decode the acronyms (ACS, TPE, MCP, ...) |
 
 ## Repo map

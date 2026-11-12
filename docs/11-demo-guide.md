@@ -24,7 +24,7 @@ A tight 8–10 minute walkthrough, plus preparation and a recovery plan.
 Narrate while the console updates: transcript lines appear, the Service Intake Form fills in, fields flash, the summary
 grows, and the coaching box suggests the next question.
 
-**3 · Show the data lookup (1 min).** Ask the receptionist: "Are there any open quality alerts on that furnace?" It answers
+**3 · Show the data lookup (1 min).** Ask the receptionist: "Do we have any open tickets on that furnace?" It answers
 from Dataverse through MCP.
 
 **4 · Bring in a human (1 min).** Say: "Can I talk to a person?" The rep's Teams rings. Answer. The AI goes quiet.

@@ -31,7 +31,7 @@ Use `-VoiceInstructionsFile` or `-NotetakerInstructionsFile` to point at your ow
 | Section | Customize |
 |---|---|
 | Personality | The assistant's name (`FloorWorks Assistant`) and company, plus the voice's grammatical gender if you change `-Voice` |
-| Environment | The Dataverse tables it may query (`bdm_equipment`, `bdm_part`, `bdm_qualityalert`, `bdm_serviceticket`). Change them if your data model differs |
+| Environment | The Dataverse tables it may query (`account`, `bdm_equipment`, `bdm_serviceticket`). Change them if your data model differs |
 | Tone and Goal | Style, brevity, and what a resolved call looks like |
 | Guardrails | Scope, language rules, name handling, speech-recognition hints (for example "mail" for "mill") |
 | Human handoff | Keep the `transfer_to_rep` rule. Without it the agent cannot hand off |
@@ -41,7 +41,7 @@ Use `-VoiceInstructionsFile` or `-NotetakerInstructionsFile` to point at your ow
 
 - **Fields:** `customer_name`, `phone`, `equipment_model`, `equipment_serial_or_asset`, `location`, `complaint`, `priority`, `preferred_time`, `summary`. The rep console and Dataverse draft columns map to these. If you add or rename a field, update the console and data model too ([05](05-data-model.md)).
 - **Priority values:** `Low | Medium | High | Critical`.
-- **Matching rules:** how it matches equipment, quality alerts and tickets from Dataverse (read-only).
+- **Matching rules:** how it matches accounts, contacts, equipment and tickets from Dataverse (read-only).
 - **Part-number hints:** examples such as "HV 2020" meaning "HV-220".
 - **Enrichment block:** the section between `ENRICHMENT:BEGIN` and `ENRICHMENT:END` is included only with `-Enrichment on`.
 

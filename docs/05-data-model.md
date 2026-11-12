@@ -1,24 +1,38 @@
 # 05 · Data model
 
-All tables use the publisher prefix `bdm_`. They are created by `dataverse/provision-dataverse.ps1`, which is idempotent:
-it creates missing tables, columns and relationships, and seeds sample rows by name.
+Customers are the standard Dataverse **Account** table. Equipment, tickets and drafts are custom tables with the
+publisher prefix `bdm_`. `dataverse/provision-dataverse.ps1` is idempotent: it creates missing tables, columns and
+relationships, and seeds sample rows by name. `dataverse/config.json` names the table for each role; see [18 · Table configuration](18-table-configuration.md) for how the provisioner, gateway and agents use it.
 
 ## Entity relationships
 
 ```mermaid
 erDiagram
-    CUSTOMER ||--o{ EQUIPMENT : owns
-    CUSTOMER ||--o{ SERVICETICKET : requests
-    EQUIPMENT ||--o{ SERVICETICKET : "work on"
-    EQUIPMENT ||--o{ QUALITYALERT : "raised against"
-    PART ||--o{ QUALITYALERT : "affects"
-    QUALITYALERT ||--o{ SERVICETICKET : "related to"
-    CUSTOMER ||--o{ SERVICEREQUESTDRAFT : "linked to"
-    EQUIPMENT ||--o{ SERVICEREQUESTDRAFT : "linked to"
-    SERVICEREQUESTDRAFT |o--o| SERVICETICKET : "becomes on submit"
+    ACCOUNT ||--o{ CONTACT : employs
+    CONTACT ||--o{ BDM_SERVICEREQUESTDRAFT : "called in"
+    CONTACT ||--o{ BDM_SERVICETICKET : "reported by"
+    ACCOUNT ||--o{ BDM_EQUIPMENT : owns
+    ACCOUNT ||--o{ BDM_SERVICETICKET : requests
+    BDM_EQUIPMENT ||--o{ BDM_SERVICETICKET : "work on"
+    ACCOUNT ||--o{ BDM_SERVICEREQUESTDRAFT : "linked to"
+    BDM_EQUIPMENT ||--o{ BDM_SERVICEREQUESTDRAFT : "linked to"
+    BDM_SERVICEREQUESTDRAFT |o--o| BDM_SERVICETICKET : "becomes on submit"
 ```
 
+The lookup to Account is named `bdm_CustomerId` on equipment, tickets and drafts. Drafts and tickets also have a
+`bdm_ContactId` lookup to the standard Contact table (the person who called). Equipment belongs to the account, not the person.
+
 ## Tables
+
+### `account` — Customer (standard table)
+Used as is: `name`, `accountnumber`, `telephone1`-`telephone3` (the caller is matched on these), `emailaddress1`.
+
+### `contact` — Caller (standard table, optional role)
+Used as is: `fullname`, `mobilephone` and `telephone1`-`telephone3` (the caller is matched on these), `emailaddress1`,
+`parentcustomerid` (the Account). Matching tries contacts first, then the account's own phones; a unique contact match
+resolves to its account and is stored on the draft. The role is optional: remove `"contact"` from `roles` in
+`dataverse\config.json` and the gateway uses the account phone only. The voice agent may state a matched name only as a
+confirming question ("Am I speaking with ...?").
 
 ### `bdm_equipment` — Equipment
 Manufacturing assets on the plant floor.
@@ -31,30 +45,7 @@ Manufacturing assets on the plant floor.
 | `bdm_manufacturer` | Text 100 | |
 | `bdm_status` | Choice | Operational, Degraded, Down, Under Maintenance |
 | `bdm_installdate` | Date | |
-| `bdm_customerid` | Lookup → Customer | Owner |
-
-### `bdm_part` — Part
-
-| Column | Type | Notes |
-|---|---|---|
-| `bdm_name` | Text (primary) | |
-| `bdm_partnumber` | Text 50 | |
-| `bdm_supplier` | Text 100 | |
-| `bdm_category` | Choice | Hydraulic, Electrical, Mechanical, Fastener, Consumable |
-| `bdm_unitcost` | Decimal | USD |
-
-### `bdm_qualityalert` — Quality Alert
-
-| Column | Type | Notes |
-|---|---|---|
-| `bdm_name` | Text (primary) | Alert title |
-| `bdm_severity` | Choice | Low, Medium, High, Critical |
-| `bdm_status` | Choice | New, Investigating, Contained, Closed |
-| `bdm_description` | Multiline | |
-| `bdm_defectcount` | Whole number | |
-| `bdm_detectedon` | Date and time | |
-| `bdm_partid` | Lookup → Part | |
-| `bdm_equipmentid` | Lookup → Equipment | |
+| `bdm_customerid` | Lookup → Account | Owner |
 
 ### `bdm_serviceticket` — Service Ticket
 The real work order. **Created only by a rep's Submit.**
@@ -67,18 +58,8 @@ The real work order. **Created only by a rep's Submit.**
 | `bdm_description` | Multiline | Complaint plus customer, contact phone, location, preferred time |
 | `bdm_assignedtechnician` | Text 100 | |
 | `bdm_openedon` | Date and time | |
-| `bdm_customerid` | Lookup → Customer | |
+| `bdm_customerid` | Lookup → Account | |
 | `bdm_equipmentid` | Lookup → Equipment | |
-| `bdm_qualityalertid` | Lookup → Quality Alert | |
-
-### `bdm_customer` — Customer
-
-| Column | Type |
-|---|---|
-| `bdm_name` (account name, primary), `bdm_accountnumber`, `bdm_firstname`, `bdm_lastname` | Text |
-| `bdm_primaryphone`, `bdm_email` | Text |
-| `bdm_street`, `bdm_city`, `bdm_state`, `bdm_zip` | Text |
-
 ### `bdm_servicerequestdraft` — Service Request Draft
 The live, persisted draft the agents build and the rep reviews. One row per call (`bdm_callid`).
 
@@ -102,7 +83,7 @@ The live, persisted draft the agents build and the rep reviews. One row per call
 | `bdm_submittedby`, `bdm_submittedon` | Text, Date | Filled on submit |
 | `bdm_editedfields` | Text 300 | Comma list of rep-edited fields; agents will not overwrite these |
 | `bdm_enrichmentjson` | Memo | Foundry IQ "AI suggested" block (likely cause, bulletin, parts, priority, steps, sources). Written only when `ENRICHMENT=on`; separate from caller-said fields |
-| `bdm_customerid` | Lookup → Customer | |
+| `bdm_customerid` | Lookup → Account | |
 | `bdm_equipmentid` | Lookup → Equipment | |
 | `bdm_ticketid` | Lookup → Service Ticket | Set on submit |
 
@@ -127,23 +108,17 @@ other names supplies a partial JSON override (`DATAVERSE_SCHEMA` / `DATAVERSE_SC
 The required columns and relationships are unchanged; only the names differ. A `columns` section scopes a mapping to one
 table (so `bdm_name` can be `name` on customers and `title` on tickets), and `null` marks a column that does not exist.
 
-### Standard tables (account and Case)
+### Choosing tables
 
-Set `DATAVERSE_PROFILE=cdm-account-case` to use common data model tables instead of the custom ones:
-
-| FloorWorks | Standard | Notes |
-|---|---|---|
-| `bdm_customers` | `account` | `name`, `accountnumber`, `telephone1`, `emailaddress1`, `address1_*`; no first or last name (name search uses `name`) |
-| `bdm_servicetickets` | `incident` | `title`, `description`, `prioritycode`, customer via `customerid_account`; no status or opened-on columns |
-| `bdm_equipments` | none | disabled: equipment stays free text on the draft and is written into the case description; the UI hides the equipment picker |
-| Priority | `prioritycode` | Low 3, Normal 2, High 1; Urgent collapses to High (Case has no Urgent) |
-
-Create the draft table with lookups to `account` and `incident` using
-`dataverse\provision-dataverse.ps1 -OrgUrl <org> -StandardTables` (no custom customer, ticket or equipment tables, and no
-seed data). Caller phone matching reads `telephone1`, so keep account phone numbers filled in. A field-service
-customer asset table could be mapped later by overriding `names` and removing `bdm_equipments` from `disabled`.
+There is one config file, `dataverse\config.json`. Its `roles` name the table for each role (customer, ticket,
+equipment, draft, and optionally contact); the gateway derives the columns, lookups and option values from the org metadata. Any key written
+explicitly overrides what is derived. Run `dataverse\provision-dataverse.ps1 -OrgUrl <org>` to create the tables and
+lookups the config names; if the org has Customer Service, set `"ticket": "incident"` and the script links drafts to
+Cases instead. Caller phone matching reads `telephone1`-`telephone3`, so keep account phone numbers filled in.
 
 ## Seed data
+
+The seed also creates 10 contacts (2 on FloorWorks, 1-2 on each other account) with mobile numbers in mixed formats.
 
 | Equipment | Asset # | Plant | Status |
 |---|---|---|---|
@@ -154,28 +129,4 @@ customer asset table could be mapped later by overriding `names` and removing `b
 | Hydraulic Press H1 | EQ-5001 | Monterrey, MX | Down |
 | Heat Treat Furnace F2 | EQ-6002 | Brussels, BE | Operational |
 
-Parts, quality alerts, tickets and customers are also seeded; see the script for the full set. To make a phone-number
-demo link a customer automatically, add a `bdm_customer` row whose `bdm_primaryphone` equals the caller's number in
-E.164 format.
-
-## Lifecycle of a draft
-
-```mermaid
-stateDiagram-v2
-    [*] --> Draft: first transcript or finalize
-    Draft --> Draft: agent notes (skip rep-edited fields)
-    Draft --> Draft: rep edits (field added to editedfields)
-    Draft --> Submitted: rep clicks Submit (ticket created, ticketid set)
-    Draft --> Discarded: reserved (no UI or API yet)
-    Submitted --> [*]
-    Discarded --> [*]
-```
-
-Submitted drafts are read-only: agent writes are ignored and rep edits or a second submit are rejected. The *Discarded*
-value exists in the schema but nothing sets it yet (see the [roadmap](10-roadmap.md)).
-
-## Extending the model
-
-Add columns in `provision-dataverse.ps1` (the helpers `StrAttr`, `MemoAttr`, `PickAttr`, ... are idempotent), then update
-`DraftSelect` and `Update()` in `Drafts.cs`, the form in `RepUi.cs`, and the note-taker's output schema in
-`foundry/prompts/notetaker-instructions.md`.
+Seven accounts are seeded (FloorWorks owns CNC Mill 3, Robotic Welder R7 and Hydraulic Press H1; Contoso Plastics, Adventure Works Packaging and Litware Thermal Systems own the rest) plus 6 tickets linked to their account and equipment. FloorWorks (`ACC-1000`) has telephone `(405) 602-9804`; to link a different caller automatically, put their number on an account's `telephone1`.

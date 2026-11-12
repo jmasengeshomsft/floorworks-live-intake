@@ -25,10 +25,15 @@
 
 | Variable | Required | Default | Meaning |
 |---|---|---|---|
-| `DATAVERSE_URL` | No | empty | Turns on draft persistence and rep Submit (the gateway writes `bdm_servicerequestdraft` rows and tickets). Unset: `/v1/drafts` etc. return 503 |
-| `DATAVERSE_PROFILE` | No | `floorworks` | `cdm-account-case` uses the standard `account` (customers) and `incident` (tickets) tables and treats equipment as free text; the schema override below is merged on top |
-| `DATAVERSE_SCHEMA` | No | empty | Partial JSON (inline or `b64:<base64>`) renaming tables, columns, lookups and option values (`names`, per-table `columns`, `disabled`, `options`, `tableOptions`). Omitted keys keep the profile values |
-| `DATAVERSE_SCHEMA_FILE` | No | empty | Same JSON read from a file; `DATAVERSE_SCHEMA` wins if both are set |
+| `DATAVERSE_URL` | Yes (outside `LOCAL_DEV`) | empty | Dataverse org URL; startup fails without it. The gateway writes `bdm_servicerequestdraft` rows and tickets. In `LOCAL_DEV` unset: `/v1/drafts` etc. return 503 |
+
+| `BRAND_NAME` | No | `Intake` | Prefix of generated ticket titles (`<BRAND>-Voice-<account>-<time>`) and the assistant name rendered into the voice prompt |
+| `DATAVERSE_SCHEMA` | No | empty | The Dataverse config: the contents of `dataverse\config.json` (inline or `b64:<base64>`; `deploy-gateway.ps1` sends it). Normally just `roles` (`customer`, `contact` (optional), `ticket`, `equipment`, `draft` -> logical table names) plus `describe`: the gateway reads the org metadata at first use and derives entity sets, columns, lookups, phone columns, priority option values and description limit; preflight and prompt rendering do the same. Anything written explicitly wins over what is derived. Explicit keys: `names`, per-table `columns`, `disabled`, `options`, `tableOptions`, `logicalNames`, `phoneColumns`, `ticketDescriptionMax`, `ticketNoteBind`, plus `describe` (table and column meanings rendered into the agent prompts) and a `profile` label. Nothing is built in; omitted keys mean the canonical `bdm_*` names. Required with `DATAVERSE_URL` outside `LOCAL_DEV` |
+| `DATAVERSE_SCHEMA_FILE` | No | empty | Same JSON read from a file; `DATAVERSE_SCHEMA` wins if both are set. Validate against your org with `python -m app.preflight` (`--offline` skips the org check) |
+
+**One config file:** `dataverse\config.json` (see [18 · Table configuration](18-table-configuration.md)) is the single source for the Dataverse tables: `roles` (customer, contact, equipment, ticket, draft), `describe` and optional overrides. It is not baked into the image: `provision-dataverse.ps1`/`seed-demo-data.ps1` (via `dataverse\get-config.ps1`) and the agent prompt rendering (`foundry\render-prompt.ps1`) read it directly, and `infra\deploy-gateway.ps1` reads it and sets it as the `DATAVERSE_SCHEMA` env var on the container app (`dataverseSchema` in the parameters file overrides it). The gateway and the voice agent are configured separately, so after a table change redeploy the gateway **and** re-run `setup-agents.ps1`. For local runs of the gateway, preflight or tests, set `DATAVERSE_SCHEMA_FILE=dataverse\config.json`.
+
+**Customer quickstart:** edit `dataverse\config.json` → `dataverse\provision-dataverse.ps1 -OrgUrl <url>` (structure only, zero data; picks standard vs custom tables from the config) → set `DATAVERSE_URL`, `BRAND_NAME` → `python -m app.preflight` → `foundry\setup-agents.ps1` (renders the voice prompt from the same config) → deploy. Demo data is optional: `dataverse\seed-demo-data.ps1`.
 
 Override shape (see `src/intake-gateway/schema.example.json`):
 `{"names": {"bdm_callid": "acme_callref", "bdm_CustomerId": "acme_Customer"}, "options": {"status": {"draft": 1, "submitted": 2}}}`.

@@ -4,22 +4,29 @@ The gateway code uses the FloorWorks `bdm_*` names as canonical keys. A `Schema`
 Dataverse boundary only (request path/body out, response rows in), so a deployment that stores customers and
 tickets in other tables (for example the standard `account` and `incident` tables) is configuration, not code.
 
-Profiles (select with DATAVERSE_PROFILE or a `"profile"` key; an override is merged on top):
-  floorworks        the custom bdm_* tables (default)
-  cdm-account-case  customers = account, tickets = incident (Case); no equipment table (equipment stays free text
-                    on the draft and in the case description). The draft table is still our own and only needs
-                    lookups to account and incident (`provision-dataverse.ps1 -StandardTables`).
-
-Override JSON (all keys optional; anything omitted keeps the profile value):
+The mapping is one explicit JSON document, normally `dataverse/config.json` (edit its `roles` to change tables). Nothing is built in: omitted keys mean "canonical bdm_* names, unchanged".
+Deployment reads the file and passes it in DATAVERSE_SCHEMA (or point DATAVERSE_SCHEMA_FILE at it for local runs).
 
     {
-      "profile":  "cdm-account-case",
+      "profile":  "acme",                      (label only)
+      "roles":    {"customer": "account", "ticket": "incident", "contact": "contact"},   (discover the rest from the org, see discover.py; contact is optional)
+      "describe": {"account": "Customers", "account.telephone1": "Primary phone"},   (for agent prompts)
       "names":    {"bdm_servicerequestdrafts": "acme_drafts", "bdm_callid": "acme_callref"},
       "columns":  {"bdm_customers": {"bdm_primaryphone": "mobilephone", "bdm_email": null}},
       "disabled": ["bdm_equipments"],
       "options":  {"status": {"draft": 1, "submitted": 2}},
-      "tableOptions": {"bdm_servicetickets": {"priority": {"low": 3, "medium": 2, "high": 1, "urgent": 1}}}
+      "tableOptions": {"bdm_servicetickets": {"priority": {"low": 3, "medium": 2, "high": 1, "urgent": 1}}},
+      "logicalNames": {"bdm_customers": "account"},
+      "phoneColumns": ["telephone2", "telephone3"],
+      "contactPhoneColumns": ["telephone1", "telephone2"],
+      "ticketDescriptionMax": 2000,
+      "ticketNoteBind": "objectid_incident"
     }
+`logicalNames` are the singular table names used by queries, preflight and the rendered agent prompts;
+`phoneColumns` are extra customer phone columns searched besides bdm_primaryphone (`contactPhoneColumns` likewise
+for the optional contact table); text longer than
+`ticketDescriptionMax` (0 = no limit) is truncated and the full text is attached as a Note bound through
+`ticketNoteBind`.
 
 `names` maps a canonical table, column or lookup-navigation name to the real one for every table. `columns` is
 scoped to one canonical table and wins over `names`; a null value means the column does not exist there (it is
@@ -29,6 +36,7 @@ value (the first one wins when reading back).
 """
 
 import base64
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -40,47 +48,22 @@ CANON_PRIORITY = {"low": OPT_BASE, "medium": OPT_BASE + 1, "high": OPT_BASE + 2,
 OPTION_COLUMNS = {"status": "bdm_status", "priority": "bdm_priority"}
 CANON_OPTIONS = {"status": CANON_STATUS, "priority": CANON_PRIORITY}
 
-LOOKUPS = ("bdm_customerid", "bdm_equipmentid", "bdm_ticketid")
-TABLES = {"bdm_servicerequestdrafts", "bdm_servicetickets", "bdm_customers", "bdm_equipments"}
+LOOKUPS = ("bdm_customerid", "bdm_equipmentid", "bdm_ticketid", "bdm_contactid")
+TABLES = {"bdm_servicerequestdrafts", "bdm_servicetickets", "bdm_customers", "bdm_equipments", "bdm_contacts"}
 COLUMNS = {
     "bdm_servicerequestdraftid", "bdm_serviceticketid", "bdm_name", "bdm_callid", "bdm_callerphone", "bdm_customername",
     "bdm_equipmenttext", "bdm_complaint", "bdm_priority", "bdm_summary", "bdm_transcript", "bdm_coaching", "bdm_status",
     "bdm_submittedby", "bdm_submittedon", "bdm_contactphone", "bdm_assetnumber", "bdm_location", "bdm_preferredtime",
     "bdm_editedfields", "bdm_enrichmentjson", "bdm_description", "bdm_openedon", "bdm_accountnumber", "bdm_firstname",
     "bdm_lastname", "bdm_primaryphone", "bdm_email", "bdm_street", "bdm_city", "bdm_state", "bdm_zip", "bdm_manufacturer",
-    "bdm_plant", "bdm_customerid", "bdm_equipmentid", "bdm_ticketid",
+    "bdm_plant", "bdm_customerid", "bdm_equipmentid", "bdm_ticketid", "bdm_contactid", "bdm_contactname",
 }
-LOOKUP_NAMES = {"bdm_CustomerId", "bdm_EquipmentId", "bdm_TicketId"}
+LOOKUP_NAMES = {"bdm_CustomerId", "bdm_EquipmentId", "bdm_TicketId", "bdm_ContactId"}
 LOOKUP_VALUES = {f"_{lk}_value" for lk in LOOKUPS}
 KNOWN_NAMES = TABLES | COLUMNS | LOOKUP_NAMES | LOOKUP_VALUES
 _TOKEN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _QUOTED = re.compile(r"('(?:[^']|'')*')")
 _SELECT = re.compile(r"(\$select=)([^&]*)")
-
-PROFILES: dict[str, dict] = {
-    "floorworks": {},
-    "cdm-account-case": {
-        "names": {"bdm_customers": "accounts", "bdm_servicetickets": "incidents"},
-        "disabled": ["bdm_equipments"],
-        "columns": {
-            "bdm_customers": {
-                "bdm_customerid": "accountid", "bdm_name": "name", "bdm_accountnumber": "accountnumber",
-                "bdm_primaryphone": "telephone1", "bdm_email": "emailaddress1", "bdm_street": "address1_line1",
-                "bdm_city": "address1_city", "bdm_state": "address1_stateorprovince", "bdm_zip": "address1_postalcode",
-                "bdm_firstname": None, "bdm_lastname": None,
-            },
-            "bdm_servicetickets": {
-                "bdm_serviceticketid": "incidentid", "bdm_name": "title", "bdm_description": "description",
-                "bdm_priority": "prioritycode", "bdm_status": None, "bdm_openedon": None,
-                "bdm_CustomerId": "customerid_account", "_bdm_customerid_value": "_customerid_value",
-                "bdm_EquipmentId": None, "_bdm_equipmentid_value": None,
-            },
-            "bdm_servicerequestdrafts": {"bdm_EquipmentId": None, "_bdm_equipmentid_value": None},
-        },
-        "tableOptions": {"bdm_servicetickets": {"priority": {"low": 3, "medium": 2, "high": 1, "urgent": 1}}},
-    },
-}
-
 
 class SchemaError(ValueError):
     pass
@@ -114,15 +97,25 @@ def _options(label: str, canon: dict, given: Any, distinct: bool) -> dict:
 
 
 class Schema:
-    def __init__(self, overrides: dict | None = None, profile: str = ""):
+    def __init__(self, overrides: dict | None = None):
         o = overrides or {}
-        unknown = set(o) - {"profile", "names", "columns", "disabled", "options", "tableOptions"}
+        unknown = set(o) - {"profile", "describe", "names", "columns", "disabled", "options", "tableOptions", "logicalNames",
+                            "phoneColumns", "contactPhoneColumns", "ticketDescriptionMax", "ticketNoteBind", "roles"}
         if unknown:
             raise SchemaError(f"unknown top-level keys: {sorted(unknown)}")
-        self.profile = o.get("profile") or profile or "floorworks"
-        if self.profile not in PROFILES:
-            raise SchemaError(f"unknown profile {self.profile!r}; use one of {sorted(PROFILES)}")
-        cfg = _merge(PROFILES[self.profile], {k: v for k, v in o.items() if k != "profile"})
+        self.profile = str(o.get("profile") or "custom")
+        self.describe = o.get("describe") or {}
+        if not isinstance(self.describe, dict) or not all(isinstance(v, (str, dict)) for v in self.describe.values()):
+            raise SchemaError("describe must be an object of table -> text or column -> text")
+        self.raw = o
+        self.roles = o.get("roles") or {}
+        if not isinstance(self.roles, dict) or not all(v is None or isinstance(v, str) for v in self.roles.values()):
+            raise SchemaError("roles must be an object of role -> logical table name")
+        bad_roles = set(self.roles) - {"customer", "ticket", "equipment", "draft", "contact"}
+        if bad_roles:
+            raise SchemaError(f"roles has unknown keys: {sorted(bad_roles)}")
+        cfg = {k: v for k, v in o.items() if k not in ("profile", "describe", "roles")}
+        self.hash = hashlib.sha256(json.dumps(o, sort_keys=True).encode("utf-8")).hexdigest()[:12]
 
         names = cfg.get("names") or {}
         for k, v in names.items():
@@ -137,9 +130,27 @@ class Schema:
                 if k not in KNOWN_NAMES - TABLES:
                     raise SchemaError(f"columns.{t}: unknown canonical column {k}")
                 _logical(f"columns.{t}.{k}", v, nullable=True)
-        self.disabled = set(cfg.get("disabled") or [])
+        self.disabled = set(cfg.get("disabled") or []) | ({"bdm_equipments"} if "equipment" in self.roles and not self.roles["equipment"] else set())
         if not self.disabled <= TABLES:
             raise SchemaError(f"disabled has unknown tables: {sorted(self.disabled - TABLES)}")
+        role_table = {"customer": "bdm_customers", "ticket": "bdm_servicetickets", "equipment": "bdm_equipments",
+                      "draft": "bdm_servicerequestdrafts", "contact": "bdm_contacts"}
+        self.logical = {role_table[r]: v for r, v in self.roles.items() if v}
+        self.logical.update(cfg.get("logicalNames") or {})
+        for t, v in self.logical.items():
+            if t not in TABLES:
+                raise SchemaError(f"logicalNames.{t}: unknown canonical table")
+            _logical(f"logicalNames.{t}", v)
+        self.phone_columns = list(cfg.get("phoneColumns") or [])
+        self.contact_phone_columns = list(cfg.get("contactPhoneColumns") or [])
+        for v in self.phone_columns + self.contact_phone_columns:
+            _logical("phoneColumns[]", v)
+        self.contacts = bool(self.logical.get("bdm_contacts")) and "bdm_contacts" not in self.disabled
+        self.description_max = cfg.get("ticketDescriptionMax") or 0
+        if not isinstance(self.description_max, int) or isinstance(self.description_max, bool) or self.description_max < 0:
+            raise SchemaError("ticketDescriptionMax must be a non-negative integer")
+        self.note_bind = cfg.get("ticketNoteBind") or None
+        _logical("ticketNoteBind", self.note_bind, nullable=True)
 
         self.tables = {t: names[t] for t in TABLES if t in names and names[t] != t}
         self.fwd: dict[str, dict[str, str | None]] = {}
@@ -188,8 +199,18 @@ class Schema:
             and self.status == CANON_STATUS and self.priority == CANON_PRIORITY and not topts
         )
 
+    def logical_name(self, table: str) -> str:
+        """Singular Dataverse table name (what MCP/SQL queries and metadata use), as opposed to the entity-set path."""
+        return self.logical.get(table, table.rstrip("s"))
+
+    def real_table(self, table: str) -> str:
+        return self.tables.get(table, table)
+
+    def real_column(self, table: str, column: str) -> str | None:
+        return self.fwd.get(table, {}).get(column, column)
+
     @classmethod
-    def load(cls, raw: str = "", path: str = "", profile: str = "") -> "Schema":
+    def load(cls, raw: str = "", path: str = "") -> "Schema":
         """Inline JSON (or `b64:<base64 JSON>`, which survives shell quoting) wins over a file."""
         try:
             data: Any = None
@@ -204,7 +225,7 @@ class Schema:
             raise SchemaError(f"cannot load Dataverse schema: {e}") from e
         if data is not None and not isinstance(data, dict):
             raise SchemaError("Dataverse schema must be a JSON object")
-        return cls(data, profile)
+        return cls(data)
 
     @staticmethod
     def table_of(path: str) -> str:

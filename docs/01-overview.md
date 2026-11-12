@@ -33,7 +33,7 @@ Customer ──► AI receptionist ──(only if asked)──► Human rep join
 | **Draft, then human submit** | Agents never create tickets. They write a persisted draft; the rep is the only path to a real ticket. |
 | **One call, one app** | A single application answers the call, streams the audio and hosts the console. No bot-per-call VMs. |
 | **Native Foundry agents** | The receptionist is a Microsoft Foundry *voice agent*; the note-taker is a Foundry *prompt agent*. Prompts and tools are managed in Foundry, not hard-coded. |
-| **Business data through MCP** | Agents read equipment, quality alerts and tickets through the **Dataverse MCP server**, not custom APIs. |
+| **Business data through MCP** | Agents read accounts, contacts, equipment and tickets through the **Dataverse MCP server**, not custom APIs. |
 | **Rep edits always win** | Once a rep edits a field, the agents stop overwriting it. |
 | **Persist early** | The draft, transcript and summary are saved as the call progresses, so a dropped call still leaves a reviewable draft. |
 
@@ -42,7 +42,7 @@ Customer ──► AI receptionist ──(only if asked)──► Human rep join
 1. The caller dials the FloorWorks number and hears a greeting within about a second.
 2. The receptionist asks what they need. For an equipment problem it asks for the machine (by name or model; no asset
    number needed) and what is wrong.
-3. The receptionist can look up equipment and open quality alerts for the caller. It never promises a ticket.
+3. The receptionist can look up the caller's account, equipment and open tickets. It never promises a ticket.
 4. If the caller says they want a person, the receptionist transfers: the rep is added to the call and the AI goes quiet.
 5. The rep already sees everything captured so far, so the caller does not repeat themselves.
 

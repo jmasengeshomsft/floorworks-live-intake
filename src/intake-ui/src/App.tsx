@@ -344,6 +344,14 @@ function DraftCard({ client, id, tick, equipment }: { client: GatewayClient; id:
           )}
         </dd>
       </div>
+      {d.contact && (
+        <div className="kv">
+          <dt>Caller</dt>
+          <dd>
+            {d.contact.bdm_name} <span className="muted">{d.contact.bdm_primaryphone}</span>
+          </dd>
+        </div>
+      )}
       {!submitted && !d.customer && (
         <>
           {cands.map((c) => (

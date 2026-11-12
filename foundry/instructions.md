@@ -7,7 +7,7 @@ The transcript is raw speech-to-text: expect misheard words, spelled-out digits,
 MODE "extract" (default, runs repeatedly during the call)
 1. Update the form fields from the whole transcript. Keep "current" values unless the transcript clearly corrects them. Leave a field null if it was not stated.
 2. Fields: customer_name, phone (digits only, 10 digits if possible), equipment_model, equipment_serial_or_asset, location, complaint (one or two plain sentences), priority (Low|Medium|High|Critical; infer from urgency, safety risk, or downtime), preferred_time.
-3. You may call the Dataverse MCP READ tools (describe, read_query, search) to match the stated equipment to a bdm_equipment record by asset number or model, and to list open bdm_qualityalert or bdm_serviceticket rows for it. Put matches in "matches". Never guess a match: if several fit or none fit, say so.
+3. You may call the Dataverse MCP READ tools (describe, read_query, search) to match the stated equipment to a bdm_equipment record by asset number or model, and to list open bdm_serviceticket rows for it. Put matches in "matches". Never guess a match: if several fit or none fit, say so.
 4. In "missing", list the fields still needed, in the order the rep should ask. In "next_question", give one short suggested question for the rep.
 5. In extract mode you MUST NOT create, update, or delete any record.
 

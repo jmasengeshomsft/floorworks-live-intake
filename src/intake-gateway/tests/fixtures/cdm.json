@@ -1,0 +1,13 @@
+{
+  "profile": "cdm-test",
+  "names": {"bdm_customers": "accounts", "bdm_servicetickets": "incidents"},
+  "logicalNames": {"bdm_customers": "account", "bdm_servicetickets": "incident"},
+  "columns": {
+    "bdm_customers": {"bdm_customerid": "accountid", "bdm_name": "name", "bdm_accountnumber": "accountnumber", "bdm_primaryphone": "telephone1", "bdm_email": "emailaddress1", "bdm_firstname": null, "bdm_lastname": null, "bdm_street": "address1_line1", "bdm_city": "address1_city", "bdm_state": "address1_stateorprovince", "bdm_zip": "address1_postalcode"},
+    "bdm_servicetickets": {"bdm_serviceticketid": "incidentid", "bdm_name": "title", "bdm_description": "description", "bdm_priority": "prioritycode", "bdm_status": null, "bdm_openedon": null, "bdm_CustomerId": "customerid_account", "_bdm_customerid_value": "_customerid_value"}
+  },
+  "tableOptions": {"bdm_servicetickets": {"priority": {"low": 3, "medium": 2, "high": 1, "urgent": 1}}},
+  "phoneColumns": ["telephone2", "telephone3"],
+  "ticketDescriptionMax": 2000,
+  "describe": {"account": {"table": "Customers"}}
+}

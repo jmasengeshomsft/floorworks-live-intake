@@ -21,6 +21,10 @@ param(
   [string]$VoiceAgent,
   [string]$ExtractorAgent,
 [string]$CorsOrigins,
+  [string]$DataverseUrl,
+  [string]$BrandName,
+  [string]$EnvironmentName,
+  [string]$AcrName,
   [switch]$NonInteractive,
   [switch]$Force
 )
@@ -111,6 +115,7 @@ Ok "resource group $rg (taken from the ACS resource so Event Grid and the app sh
 Step "Container Apps environment"
 $envs = J (az containerapp env list -g $rg --query "[].{name:name}" -o json)
 if (-not $envs) { $envs = J (az containerapp env list --query "[].{name:name,rg:resourceGroup}" -o json) }
+if ($EnvironmentName) { $envs = @($envs | Where-Object { $_.name -eq $EnvironmentName }) }
 $ce = Pick 'Container Apps environment' $envs { param($e) $e.name }
 $envName = $ce.name
 $envRg = if ($ce.rg) { $ce.rg } else { $rg }
@@ -118,6 +123,7 @@ if ($envRg -ne $rg) { Warn "Environment is in '$envRg', the app will be created 
 
 Step "Container registry"
 $acrs = J (az acr list --query "[].{name:name,rg:resourceGroup}" -o json)
+if ($AcrName) { $acrs = @($acrs | Where-Object { $_.name -eq $AcrName }) }
 $acr = Pick 'container registry' $acrs { param($a) "$($a.name) ($($a.rg))" }
 
 Step "Foundry project and agents"
@@ -222,12 +228,22 @@ $k = Az-Quiet cognitiveservices account keys list -g $fa.rg -n $fa.name --query 
 if ($k) { $speechKey = $k; Ok "using the Foundry account's key for Speech in $speechRegion (kept out of git; the file is gitignored)" }
 else { Warn "Could not read a Speech key; live notes will be off unless you add speechKey." }
 
+Step "Dataverse (where drafts and tickets are stored)"
+$dvUrl = $DataverseUrl
+if (-not $dvUrl -and -not $NonInteractive) { $dvUrl = Read-Host "  Dataverse org URL, e.g. https://<org>.crm.dynamics.com (required to run outside local dev)" }
+if ($dvUrl) { $dvUrl = $dvUrl.TrimEnd('/'); if ($dvUrl -notmatch '^https://') { throw "Dataverse URL must start with https://" }; Ok "Dataverse $dvUrl" }
+else { Warn "No Dataverse URL: the deployed gateway will refuse to start until dataverseUrl is set in the parameters file." }
+$brand = $BrandName
+if (-not $brand -and -not $NonInteractive) { $brand = Read-Host "  Brand name used in ticket titles and the assistant name [Intake]" }
+if (-not $brand) { $brand = 'Intake' }
+
 $params = [ordered]@{
   subscriptionId = $Subscription; resourceGroup = $envRg; appName = $AppName
   acrName = $acr.name; environmentName = $envName; acsResourceName = $acs.name
   foundryProjectEndpoint = $endpoint; voiceAgentName = $voice; extractorAgentName = $extractor
   resourceAccountObjectId = "$oid"; lineNumbers = "$phone"; transferTeamsObjectIds = ($tIds -join ','); corsOrigins = "$cors"
-  liveNotes = 'on'; enrichment = 'off'; speechRegion = $speechRegion; speechKey = $speechKey; apiKeys = ''
+  liveNotes = 'on'; enrichment = 'off'; dataverseUrl = "$dvUrl"; brandName = "$brand"
+  speechRegion = $speechRegion; speechKey = $speechKey; apiKeys = ''
 }
 $out = Join-Path $PSScriptRoot "gateway.$Name.json"
 if ((Test-Path $out) -and -not $Force) { throw "$out exists. Use -Force to overwrite or -Name <other>." }

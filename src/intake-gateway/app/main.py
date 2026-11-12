@@ -163,7 +163,9 @@ def create_app(settings: Settings | None = None, store: CallStore | None = None,
             "extractorAgent": s.extractor_agent,
             "enrichment": s.enrichment,
             "drafts": drafts is not None,
+            "dataverseConfig": drafts.schema.hash if drafts is not None else None,
             "equipment": drafts is None or drafts.schema.enabled("bdm_equipments"),
+            "contacts": drafts is not None and drafts.schema.contacts,
             "liveNotes": gw.transcriber.name,
             "afterHoursMode": s.after_hours,
             "afterHoursNow": afterhours.is_active(s),
@@ -208,6 +210,10 @@ def create_app(settings: Settings | None = None, store: CallStore | None = None,
     @app.get("/v1/equipment", dependencies=[auth])
     async def list_equipment(customerId: str | None = None):
         return await dv(need_drafts().list_equipment(customerId))
+
+    @app.get("/v1/contacts", dependencies=[auth])
+    async def list_contacts(customerId: str | None = None):
+        return await dv(need_drafts().list_contacts(customerId))
 
     @app.get("/v1/drafts/{call_id}", dependencies=[auth])
     async def get_draft(call_id: str):

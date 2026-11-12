@@ -7,7 +7,7 @@ import time
 from .state import CallState, EventHub
 
 SCRIPT = [
-    ("agent", "Thanks for calling FloorWorks service. How can I help?", {}),
+    ("agent", "Thanks for calling service. How can I help?", {}),
     ("caller", "Hi, the hydraulic press H1 is leaking at the valve.", {"equipment": "Hydraulic Press H1", "issue": "valve leaking"}),
     ("agent", "Sorry to hear that. Is the machine still running?", {}),
     ("caller", "We shut it down. It's losing pressure, maybe 3000 psi.", {"severity": "machine down"}),

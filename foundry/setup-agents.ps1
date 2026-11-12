@@ -33,7 +33,7 @@ param(
   [string]$NotetakerModel,                  # deployment name; chosen from the project's deployments when omitted
   [string]$VoiceModel = 'gpt-realtime-2.1',
   [string]$Voice = 'en-US-Ava:DragonHDLatestNeural',
-  [string]$Greeting = "Hello, I'm FloorWorks Assistant. How can I help you today?",
+  [string]$Greeting = "Hello, thanks for calling. How can I help you today?",
   [string]$VoiceInstructionsFile = (Join-Path $PSScriptRoot 'prompts\voice-instructions.md'),
   [string]$NotetakerInstructionsFile = (Join-Path $PSScriptRoot 'prompts\notetaker-instructions.md'),
   [ValidateSet('on', 'off')][string]$Enrichment = 'off',
@@ -284,9 +284,12 @@ $nt = Publish "agents/$NotetakerAgent/versions" 'VoiceAgents=V1Preview' @{
 } "agent $NotetakerAgent"
 
 Step 'Voice agent'
+# Render against the live org so the stamped config hash matches the gateway's resolved schema
+$brandForPrompt = if ($ParamsFile -and (Test-Path $ParamsFile)) { [string](Get-Content $ParamsFile -Raw | ConvertFrom-Json).brandName } else { $env:BRAND_NAME }
+if (-not $env:DATAVERSE_URL) { $env:DATAVERSE_URL = $OrgUrl; $env:LOCAL_DEV = '1' }
 $voiceDef = @{
   kind = 'voice'; model_type = 'managed'; model = $VoiceModel; store = $true
-  instructions = (Get-Content $VoiceInstructionsFile -Raw)
+  instructions = ((& (Join-Path $PSScriptRoot 'render-prompt.ps1') $VoiceInstructionsFile -Brand $brandForPrompt) +  "`n<!-- prompt-rendered: $(Get-Date -Format s)Z -->")
   greeting = @{ type = 'template'; text = $Greeting }
   audio = @{
     input = @{
@@ -355,7 +358,7 @@ Write-Host "  voiceAgentName         : $VoiceAgent"
 Write-Host "  extractorAgent         : $NotetakerAgent"
 if ($ParamsFile) {
   $p = Get-Content $ParamsFile -Raw | ConvertFrom-Json
-  foreach ($kv in @{ foundryProjectEndpoint = $ep; voiceAgentName = $VoiceAgent; extractorAgent = $NotetakerAgent }.GetEnumerator()) {
+  foreach ($kv in @{ foundryProjectEndpoint = $ep; voiceAgentName = $VoiceAgent; extractorAgentName = $NotetakerAgent }.GetEnumerator()) {
     if ($p.PSObject.Properties[$kv.Key]) { $p.($kv.Key) = $kv.Value } else { $p | Add-Member -NotePropertyName $kv.Key -NotePropertyValue $kv.Value }
   }
   [IO.File]::WriteAllText((Resolve-Path $ParamsFile), ($p | ConvertTo-Json -Depth 10))

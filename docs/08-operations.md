@@ -54,7 +54,7 @@ Work from the symptom to the cause.
 | `AddParticipant FAILED` 480 *Temporarily Unavailable* | Rep offline, in Do Not Disturb, or not Enterprise Voice enabled | Sign the rep into Teams, set Available, verify voice enablement |
 | `AddParticipant FAILED` 603 *Decline* | Rep declined or did not answer | Retry; consider multiple reps in `REP_TEAMS_OBJECT_IDS` |
 | AI greets again mid-call | ACS reconnected the media socket and the voice agent restarted | Known limit; see [roadmap](10-roadmap.md) |
-| Draft has no customer or equipment | Caller phone not in `bdm_customer`; equipment not matched | Seed the customer; rep picks links in the console |
+| Draft has no customer or equipment | Caller phone not on any `account` (`telephone1`-`telephone3`); equipment not matched | Seed the customer; rep picks links in the console |
 | Equipment mis-transcribed ("CNC Mail") | 24 kHz to 16 kHz resample and no phrase list | Add a Speech phrase list with equipment names |
 | Draft empty after a short call | Caller hung up before speaking | Normal; the draft is created from the first transcript or at finalize |
 | `/rep` returns 401 | Missing or wrong key | Pass `?k=<REP_KEY>` |

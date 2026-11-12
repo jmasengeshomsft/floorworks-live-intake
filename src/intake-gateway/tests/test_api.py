@@ -3,6 +3,7 @@ import asyncio
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.cfgfiles import raw
 from app import afterhours, audio, webhooks
 from app.config import Settings
 from app.extractor import parse_agent_output
@@ -78,7 +79,7 @@ def test_validate_and_stats():
     errors, warnings = validate(Settings(live_notes=True))
     assert any("PUBLIC_BASE_URL" in e for e in errors)
     assert any("SPEECH" in w for w in warnings)
-    base = dict(public_base_url="https://x", foundry_project_endpoint="https://f", voice_agent="v", speech_auth="aad", speech_resource_id="r")
+    base = dict(public_base_url="https://x", foundry_project_endpoint="https://f", voice_agent="v",     speech_auth="aad", speech_resource_id="r", dataverse_url="https://org.crm.dynamics.com", dataverse_schema=raw("cdm"))
     errs, _ = validate(Settings(**base))
     assert any("API_KEYS" in e for e in errs)
     ok, _ = validate(Settings(**base, api_keys=["k"], gateway_secret="g", eventgrid_secret="e", acs_jwt_mode="enforce", acs_resource_id="r"))

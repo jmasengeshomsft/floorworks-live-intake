@@ -76,6 +76,7 @@ export interface DraftDetail {
   draft: DraftRow | null
   customer: Customer | null
   candidates: Customer[] | null
+  contact?: { bdm_contactid: string; bdm_name: string; bdm_primaryphone?: string; bdm_email?: string } | null
   ticket: string | null
   enrichment: Enrichment | null
 }

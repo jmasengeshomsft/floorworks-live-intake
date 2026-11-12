@@ -43,7 +43,7 @@ Draft persistence: when `DATAVERSE_URL` is set, every extraction result upserts 
 - `submit` (rep click only) creates the ticket with the call details, summary and enrichment text, marks the draft Submitted and links the ticket. Drafts already submitted are read-only.
 - Customer suggestions rank by fuzzy name plus phone match; search accepts a name or phone digits.
 - Auth: managed identity (`DefaultAzureCredential`, scope `<DATAVERSE_URL>/.default`; `AzureCliCredential` when `LOCAL_DEV=1`). It needs a Dataverse application user with a role on the tables.
-- `DATAVERSE_PROFILE=cdm-account-case` writes to the standard `account` and `incident` tables (equipment stays free text).
+- The table mapping is `dataverse/config.json` (sent as `DATAVERSE_SCHEMA`); edit its `roles` to point at other tables (for example `incident` as the ticket, or add/remove the optional `contact` role). See [docs/18-table-configuration.md](../../docs/18-table-configuration.md); the voice agent prompt is rendered from the same file, so republish the agents after a change. It names only the table roles (`roles`); the gateway derives columns, lookups and option values from the org metadata (`app/discover.py`), and explicit keys override that.
 
 Custom Dataverse schema: table, column, lookup and option-set names default to FloorWorks `bdm_*`. Override only what
 differs with one JSON (`DATAVERSE_SCHEMA` inline or `b64:<base64>`, or `DATAVERSE_SCHEMA_FILE`); see `schema.example.json`

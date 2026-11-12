@@ -16,7 +16,7 @@ Order of operations:
 2. `foundry\setup-foundry.ps1`: Dataverse application user and the `dataverse-mfg-mi` connection for the project identity.
 3. `cd foundry; dotnet run -- all`: builds the Foundry IQ index, knowledge base and project connection.
 4. `foundry\setup-agents.ps1 -Enrichment on|off`: creates the toolbox, note-taker and voice agent.
-5. Create a Dataverse application user (System Administrator) for the app identity (`APP_PRINCIPAL_ID`), the same way `setup-foundry.ps1` does for the project identity.
+5. The Dataverse application user for the app identity is created by `infra\deploy-gateway.ps1` (System Administrator, idempotent). The deploying user must be a Dataverse admin; if not, the script prints the manual fix.
 6. Manual: the Event Grid `IncomingCall` subscription to `<PUBLIC_BASE_URL>/api/incoming`, and moving the phone number.
 
 ## Intake-gateway (Option A) deploy and verify

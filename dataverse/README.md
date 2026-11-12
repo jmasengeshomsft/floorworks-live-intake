@@ -1,5 +1,7 @@
 # dataverse — schema and seed data
 
+> **`config.json` is the one file that names the tables** the provisioner, the gateway and the voice agent use. Change tables there, then re-provision, redeploy the gateway and republish the agents. See [docs/18-table-configuration.md](../docs/18-table-configuration.md).
+
 `provision-dataverse.ps1` creates and seeds the manufacturing data model through the Dataverse Web API. It is
 **idempotent**: each run adds only what is missing.
 
@@ -13,15 +15,13 @@ Requires `az login` as a user who can customize the environment. `-OrgUrl` is ma
 
 | Table | Purpose |
 |---|---|
-| `bdm_equipment` | Assets (name, asset number, plant, manufacturer, status, install date, customer) |
-| `bdm_part` | Parts (part number, supplier, category, unit cost) |
-| `bdm_qualityalert` | Quality issues on parts and equipment |
-| `bdm_serviceticket` | Real work orders, created only by rep Submit |
-| `bdm_customer` | Customer accounts |
+| `account` (standard) | Customers; the caller is matched on `telephone1`-`telephone3` |
+| `contact` (standard, optional) | The people who call; matched on `mobilephone`/`telephone1`-`telephone3`, each belongs to an account |
+| `bdm_equipment` | Assets (name, asset number, plant, manufacturer, status), each owned by an account |
+| `bdm_serviceticket` | Work orders, created only by rep Submit |
 | `bdm_servicerequestdraft` | Live drafts built during calls |
 
-Plus nine lookups wiring them together and seed rows (6 equipment, 6 parts, alerts, tickets, customers).
-Full column reference and diagrams: [docs/05-data-model.md](../docs/05-data-model.md).
+Plus lookups `CustomerId` (to account) on equipment, ticket and draft, `ContactId` (to contact, the caller) on ticket and draft, `EquipmentId` on ticket and draft, `TicketId` on draft, and seed rows (7 accounts, 10 contacts, 6 equipment, 6 tickets). The tables the gateway uses are named in `config.json`. Full column reference and diagrams: [docs/05-data-model.md](../docs/05-data-model.md).
 
 ## Change the model
 

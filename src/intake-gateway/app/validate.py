@@ -57,11 +57,18 @@ def validate(s: Settings) -> tuple[list[str], list[str]]:
             errors.append(f"Webhook URL {u.split('?')[0]} {p}.")
     if not s.transfer_teams_ids:
         warnings.append("TRANSFER_TEAMS_OBJECT_IDS not set: transfer to a rep is unavailable.")
-    if s.dataverse_url or s.dataverse_schema or s.dataverse_schema_file or s.dataverse_profile:
+    if not s.dataverse_url:
+        if s.local_dev:
+            warnings.append("DATAVERSE_URL not set: drafts and tickets are not stored (LOCAL_DEV).")
+        else:
+            errors.append("DATAVERSE_URL is required outside LOCAL_DEV (drafts and tickets are stored in Dataverse).")
+    if s.dataverse_url and not (s.dataverse_schema or s.dataverse_schema_file) and not s.local_dev:
+        errors.append("DATAVERSE_SCHEMA is required with DATAVERSE_URL: deployment sends the contents of dataverse/config.json.")
+    if s.dataverse_schema or s.dataverse_schema_file:
         from .schema import Schema, SchemaError
 
         try:
-            Schema.load(s.dataverse_schema, s.dataverse_schema_file, s.dataverse_profile)
+            Schema.load(s.dataverse_schema, s.dataverse_schema_file)
         except SchemaError as e:
             errors.append(f"Dataverse schema: {e}")
     if s.live_notes:
