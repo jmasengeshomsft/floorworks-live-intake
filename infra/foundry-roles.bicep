@@ -8,6 +8,7 @@ resource foundry 'Microsoft.CognitiveServices/accounts@2024-10-01' existing = { 
 var roles = [
   '53ca6127-db72-4b80-b1b0-d745d6d5456d' // Azure AI User
   'a97b65f3-24c7-4388-baec-2e87135dc908' // Cognitive Services User
+  'f2dc8367-1007-4938-bd23-fe263f013447' // Cognitive Services Speech User
 ]
 
 resource assignments 'Microsoft.Authorization/roleAssignments@2022-04-01' = [for r in roles: {

@@ -25,15 +25,30 @@ param existingFoundryProjectName string = 'firstProject'
 param dataverseUrl string
 
 @description('Comma-separated Entra object ids of the reps who answer in Teams.')
-param repTeamsObjectIds string
+param transferTeamsObjectIds string = ''
 
 @secure()
-@description('Shared key for the Rep Console (?k=...). Leave empty to generate none and disable the key check.')
-param repKey string = ''
+@minLength(32)
+@description('Comma-separated consumer API keys. Generate cryptographically random values.')
+param apiKeys string
 
-param speechRegion string = 'eastus'
-param voiceAgentName string = 'floorworks-voice-agent-app'
-param notetakerAgentName string = 'floorworks-notetaker'
+@secure()
+@minLength(32)
+@description('HMAC secret for per-call callback and media tokens.')
+param gatewaySecret string
+
+@secure()
+@minLength(32)
+@description('Shared secret required on the Event Grid incoming-call endpoint.')
+param eventgridSecret string
+
+@description('Shared table configuration; compile after editing dataverse/config.json.')
+param dataverseSchema object = loadJsonContent('../dataverse/config.json')
+@description('Comma-separated browser origins allowed to call the gateway.')
+param corsOrigins string = ''
+param brandName string = 'Intake'
+param voiceAgentName string = 'intake-voice-agent'
+param extractorAgentName string = 'intake-note-taker'
 
 @allowed(['on', 'off'])
 param enrichment string = 'off'
@@ -198,11 +213,14 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
   properties: {
     managedEnvironmentId: env.id
     configuration: {
+      activeRevisionsMode: 'Single'
       ingress: { external: true, targetPort: 8080, transport: 'auto' }
       registries: [{ server: acr.properties.loginServer, identity: pullIdentity.id }]
       secrets: [
         { name: 'acs-cs', value: acs.listKeys().primaryConnectionString }
-        { name: 'speech-key', value: foundry.listKeys().key1 }
+        { name: 'api-keys', value: apiKeys }
+        { name: 'gateway-secret', value: gatewaySecret }
+        { name: 'eventgrid-secret', value: eventgridSecret }
       ]
     }
     template: {
@@ -214,17 +232,25 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           resources: { cpu: json('0.5'), memory: '1Gi' }
           env: [
             { name: 'ACS_CONNECTION_STRING', secretRef: 'acs-cs' }
-            { name: 'SPEECH_KEY', secretRef: 'speech-key' }
-            { name: 'SPEECH_REGION', value: speechRegion }
+            { name: 'API_KEYS', secretRef: 'api-keys' }
+            { name: 'GATEWAY_SECRET', secretRef: 'gateway-secret' }
+            { name: 'EVENTGRID_SECRET', secretRef: 'eventgrid-secret' }
+            { name: 'ACS_RESOURCE_ID', value: acs.properties.immutableResourceId }
+            { name: 'ACS_JWT_MODE', value: 'enforce' }
+            { name: 'AZURE_CREDENTIAL_MODE', value: 'managed_identity' }
+            { name: 'SPEECH_AUTH', value: 'aad' }
+            { name: 'SPEECH_RESOURCE_ID', value: foundry.id }
+            { name: 'SPEECH_REGION', value: foundry.location }
+            { name: 'LIVE_NOTES', value: 'on' }
             { name: 'FOUNDRY_PROJECT_ENDPOINT', value: 'https://${foundryAccountName}.services.ai.azure.com/api/projects/${foundryProjectName}' }
             { name: 'DATAVERSE_URL', value: dataverseUrl }
-            { name: 'REP_TEAMS_OBJECT_IDS', value: repTeamsObjectIds }
-            { name: 'REP_KEY', value: repKey }
+            { name: 'DATAVERSE_SCHEMA', value: string(dataverseSchema) }
+            { name: 'BRAND_NAME', value: brandName }
+            { name: 'CORS_ORIGINS', value: corsOrigins }
+            { name: 'TRANSFER_TEAMS_OBJECT_IDS', value: transferTeamsObjectIds }
             { name: 'VOICE_AGENT_NAME', value: voiceAgentName }
-            { name: 'NOTETAKER_AGENT', value: notetakerAgentName }
+            { name: 'EXTRACTOR_AGENT_NAME', value: extractorAgentName }
             { name: 'PUBLIC_BASE_URL', value: publicBase }
-            { name: 'TRANSCRIPTION_MODE', value: 'voice-agent' }
-            { name: 'VOICE_SESSION_TUNING', value: 'on' }
             { name: 'ENRICHMENT', value: enrichment }
             { name: 'AFTER_HOURS', value: afterHours }
             { name: 'RINGBACK', value: ringback }
@@ -258,3 +284,5 @@ output FOUNDRY_ACCOUNT_NAME string = foundryAccountName
 output FOUNDRY_PROJECT_NAME string = foundryProjectName
 output FOUNDRY_RESOURCE_GROUP string = foundryResourceGroup
 output PROJECT_PRINCIPAL_ID string = foundryProject.identity.principalId
+output SPEECH_RESOURCE_ID string = foundry.id
+output SPEECH_REGION string = foundry.location

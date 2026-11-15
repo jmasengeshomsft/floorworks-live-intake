@@ -1,146 +1,159 @@
-# 03 · Deployment guide
+# 03 - Deployment guide
 
-This guide stands up the whole solution in your own tenant. Expect a half day the first time, most of it waiting on
-Teams and licensing.
+Both deployment paths target `src\intake-gateway` (Python). The React UI is built/hosted separately.
+Choose **PowerShell** for existing Azure infrastructure or **azd** to provision the Bicep-managed stack.
+Do not let both tools manage the same Container App: reprovisioning can replace its configuration/image.
 
-> **Status of the scripts.** `dataverse/provision-dataverse.ps1` and the Foundry wiring were run end to end. Scripts
-> under `infra/` and `teams/` were consolidated from manual steps and are parameterized rewrites: expect small fixes.
-
-## 1 · Prerequisites
+## Prerequisites
 
 | Area | Requirement |
 |---|---|
-| Azure | Subscription, resource group, Container Apps environment, Azure Container Registry |
-| ACS | Azure Communication Services resource with Call Automation |
-| Foundry | Account and project with a model deployment, plus a Speech-capable key on the AI Services account |
-| Power Platform | Environment with Dataverse (a free developer environment works) |
-| Teams | Teams admin; a phone number you own; a *Teams Phone Resource Account* license; reps with a Teams Phone license, Enterprise Voice enabled |
-| Tools | PowerShell 7, Azure CLI with `containerapp` and `communication` extensions, `MicrosoftTeams` PowerShell module, .NET 8 SDK |
+| Azure | Subscription, resource group and permission to deploy resources and assign roles |
+| Voice | ACS Call Automation, Foundry account/project and supported voice/chat model deployments |
+| Speech | Speech-capable Foundry/AI Services account with a custom subdomain for Entra authentication |
+| Dataverse | Environment, customization rights for provisioning, and an admin to register application users |
+| Teams | Admin, business phone number, licensed resource account and voice-enabled reps |
+| Tools | PowerShell 7, Azure CLI; azd for the azd path |
+| Local development | Python 3.12+; Node.js supported by Vite 8 for the UI; .NET 8 SDK only for optional Foundry IQ tooling |
 
-You also need rights to: create app registrations, grant admin consent, administer the Dataverse environment, and
-administer Teams voice.
+Existing ACS must be in the gateway resource group for these templates/scripts. Foundry can be in another resource
+group. Resource/model availability, licensing, regional support and tenant consent must be checked in your environment.
+Creating resources does not publish agents or establish Teams routing.
 
-## 2 · Dataverse data model
+## 1 - Dataverse schema and journal
 
-```powershell
-cd dataverse
-./provision-dataverse.ps1 -OrgUrl https://<org>.crm.dynamics.com
-```
-
-Creates the six tables, lookups and seed data (see [Data model](05-data-model.md)). It is idempotent: re-run it any time
-to add columns or reseed.
-
-Then, in the **Power Platform admin center → Environments → *your env* → Settings → Features**, turn on
-*Allow MCP clients to interact with Dataverse MCP server*.
-
-## 3 · Foundry ↔ Dataverse
+Review `dataverse\config.json` before running:
 
 ```powershell
-cd foundry
-./setup-foundry.ps1 -SubscriptionId <sub> -ResourceGroup <rg> -FoundryAccount <account> -FoundryProject <project> -OrgUrl https://<org>.crm.dynamics.com
+.\dataverse\provision-dataverse.ps1 -OrgUrl https://<org>.crm.dynamics.com
 ```
 
-This:
-1. creates a Dataverse *application user* for the **Foundry project's managed identity** and grants a role,
-2. adds it to the Dataverse **Allowed MCP Clients** list,
-3. creates the project connection `dataverse-mfg-mi` (type *ProjectManagedIdentity*),
-4. publishes the original extractor prompt agent.
+This is **schema-only by default**. It provisions the supported business-table profile plus draft/journal integrity
+requirements: transcript version, active draft call-ID alternate key and optimistic concurrency. Demo data is optional
+(`dataverse\seed-demo-data.ps1`). See [Dataverse provisioning](../dataverse/README.md).
 
-Then create the **note-taker** and **voice agent** and the **toolbox** as described in [AI agents](06-agents.md).
-The default role is *System Administrator*, which is fine for a demo and **must** be replaced for production
-([Security](09-security.md)).
+For an existing gateway, first pause inbound routing, finish calls and stop old revisions. Missing journal columns,
+inactive keys or missing runtime permissions cause startup failure; do not disable integrity mappings to bypass them.
+The provisioner is not a general-purpose migration tool for arbitrary customer tables:
+[table mapping](18-table-configuration.md) and customer-approved schema changes still require review.
 
-## 4 · Telephony (Teams Phone Extensibility)
+## 2 - Foundry agents and telephony prerequisites
 
-1. `infra/setup-tpe-azure.ps1`: Entra app for the bot identity, Azure Bot with the Teams calling channel, ACS service
-   principal in your tenant, and the Event Grid subscription for `IncomingCall`.
-2. `teams/setup-teams.ps1`: creates the Teams resource account, assigns your number and license, enables reps for
-   Enterprise Voice. It prompts for a device-code sign-in.
+For existing resources, prepare the agents before deploying the application:
 
-Point the Event Grid subscription at `https://<voice-intake-fqdn>/api/incoming`. The app answers Event Grid's
-subscription-validation handshake automatically, so the **VoiceIntake app must be running before you create the
-subscription**.
+```powershell
+.\foundry\setup-agents.ps1 -ProjectEndpoint https://<account>.services.ai.azure.com/api/projects/<project> `
+  -OrgUrl https://<org>.crm.dynamics.com -GrantDataverseAccess
+```
 
-> Without the bot's Teams calling channel Teams rejects the call with SIP 480 / code 10140. If you route the number
-> straight to the resource account, no Auto Attendant greeting plays; the AI receptionist replaces it.
+Review the prompts first. The opt-in access step needs a Dataverse admin and defaults to a broad demo role; replace it
+with least privilege for a customer environment. Record the printed endpoint and agent names.
+See [agent setup](17-agent-setup.md).
 
-## azd quick start
+If azd will create Foundry, run **azd provision first**, then this agent setup, then **azd deploy**.
+Optional Foundry IQ enrichment needs its knowledge base before enabling it ([Foundry guide](../foundry/README.md)).
 
-Provisions the registry, Container Apps environment, app and role assignments, then builds and deploys VoiceIntake. It reuses an **existing** ACS resource and Foundry project.
+Prepare the Azure bot/ACS tenant prerequisites and Teams resource-account binding using
+[infra](../infra/README.md), [Teams](../teams/README.md) and the [telephony runbook](15-telephony-binding-runbook.md).
+Without `-EventGridSecret`, `setup-tpe-azure.ps1` skips Event Grid with a warning; wire deliveries only after the actual
+gateway is healthy. Avoid multiple subscriptions trying to answer the same call.
+
+## 3A - PowerShell deployment
+
+This path reuses an existing ACS resource, Foundry project, Container Apps environment and ACR.
+From the repository root:
+
+```powershell
+Copy-Item .\infra\gateway.parameters.example.json .\infra\gateway.customer.json
+# Edit the private JSON: resources, agent names, Dataverse URL, CORS and transfer settings.
+.\infra\deploy-gateway.ps1 -ParametersFile .\infra\gateway.customer.json -Plan
+.\infra\deploy-gateway.ps1 -ParametersFile .\infra\gateway.customer.json -Rebuild
+```
+
+The script builds/deploys Python, manages secrets, grants Foundry/Speech access, registers the gateway's Dataverse
+application user, and wires authenticated Event Grid delivery. Its automatic Dataverse role is **System Administrator**
+for the demo; review/replace it before customer use. It does not provision the Dataverse schema.
+
+New parameter files use keyless Speech. Existing key-based files remain supported; see
+[deployment and Speech migration details](16-intake-gateway-deploy.md).
+
+## 3B - azd deployment
+
+The service key remains `voice-intake` for compatibility, but its project is the **Python gateway**.
+From the repository root, configure an environment (values in `.azure` are private and git-ignored):
 
 ```powershell
 azd auth login
-azd env new <name>
+azd env new <environment-name>
 azd env set AZURE_LOCATION eastus
-azd env set ACS_NAME <acs-resource-in-the-same-rg>
-azd env set FOUNDRY_ACCOUNT_NAME <account>
+azd env set AZURE_RESOURCE_GROUP <gateway-resource-group>
+azd env set ACS_NAME <existing-acs>
+azd env set FOUNDRY_ACCOUNT_NAME <existing-account>
+azd env set FOUNDRY_RESOURCE_GROUP <foundry-resource-group>
 azd env set FOUNDRY_PROJECT_NAME <project>
-azd env set FOUNDRY_RESOURCE_GROUP <rg>          # if different from the target RG
 azd env set DATAVERSE_URL https://<org>.crm.dynamics.com
-azd env set REP_TEAMS_OBJECT_IDS <oid1,oid2>
-azd env set REP_KEY <shared-key>
-azd env set ENRICHMENT off                       # on after the Foundry IQ KB is built (foundry/README.md)
-azd env set CREATE_ACS true                       # self-contained: also create ACS (omit ACS_NAME)
-azd env set CREATE_FOUNDRY true                   # self-contained: also create Foundry account + project; then run foundry/create-agents.ps1
-azd env set DEPLOY_SEARCH true                   # Azure AI Search for Foundry IQ (false to reuse your own)
-azd env set RUNNER_PRINCIPAL_ID <your-user-object-id>   # optional: grants you the search roles to build the KB
-azd up
+azd env set VOICE_AGENT_NAME intake-voice-agent
+azd env set EXTRACTOR_AGENT_NAME intake-note-taker
+azd env set TRANSFER_TEAMS_OBJECT_IDS <rep-object-id>
+azd env set CORS_ORIGINS http://localhost:5173
+azd env set DEPLOY_SEARCH false
+
+function New-DeploymentSecret {
+  [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+}
+azd env set API_KEYS (New-DeploymentSecret)
+azd env set GATEWAY_SECRET (New-DeploymentSecret)
+azd env set EVENTGRID_SECRET (New-DeploymentSecret)
+azd provision
 ```
 
-Manual steps azd does not cover: Dataverse schema (`dataverse/provision-dataverse.ps1`), a Dataverse **application user** for the app's managed identity (`azd env get-value APP_PRINCIPAL_ID`), publishing the agents (`foundry/`), the Teams number and the Event Grid `IncomingCall` subscription pointing at `<PUBLIC_BASE_URL>/api/incoming` (see steps 3 and 4). Set `FOUNDRY_PROJECT_ENDPOINT` when running `foundry\publish-draft-flow-agents.ps1`.
-## 5 · Build and deploy VoiceIntake (manual alternative)
+Generate these secrets **once** for a new environment; do not rotate them on every deployment.
+API/HMAC secrets are secure Bicep parameters and Container Apps secrets, not plaintext container environment values.
+Protect the local azd environment file too.
+
+To create ACS/Foundry instead of reusing them, set `CREATE_ACS=true` and/or `CREATE_FOUNDRY=true` before provision.
+New Foundry model deployments require regional availability/quota. Set `DEPLOY_SEARCH=true` only when provisioning
+the optional knowledge-base service; `RUNNER_PRINCIPAL_ID` optionally grants the KB builder's Search access.
+
+Before deploying the application:
+
+1. Complete schema provisioning and agent setup using the provisioned Foundry outputs.
+2. Register **the gateway identity separately** in Dataverse. Get its principal with
+   `azd env get-value APP_PRINCIPAL_ID`; resolve its application/client ID using
+   `az ad sp show --id <principal-id> --query appId -o tsv`. In Power Platform admin center, add that application user
+   and assign the required draft/journal, lookup, ticket, customer and annotation permissions.
+3. Ensure the Foundry account supports Speech and already has a custom subdomain. Bicep configures Speech AAD,
+   uses that account's actual region/resource ID and grants **Cognitive Services Speech User**.
 
 ```powershell
-cd src/VoiceIntake
-az acr build -r <acr> -t voice-intake:v1 .
-az containerapp create -g <rg> -n floorworks-voice-intake --environment <aca-env> `
-  --image <acr>.azurecr.io/voice-intake:v1 --registry-server <acr>.azurecr.io `
-  --target-port 8080 --ingress external --min-replicas 1 --max-replicas 1 `
-  --system-assigned `
-  --secrets acs-cs="<ACS connection string>" speech-key="<speech key>" rep-key="<long random string>" `
-  --env-vars ACS_CONNECTION_STRING=secretref:acs-cs SPEECH_KEY=secretref:speech-key REP_KEY=secretref:rep-key `
-             SPEECH_REGION=eastus PUBLIC_BASE_URL=https://<fqdn> `
-             FOUNDRY_PROJECT_ENDPOINT=https://<account>.services.ai.azure.com/api/projects/<project> `
-             DATAVERSE_URL=https://<org>.crm.dynamics.com `
-             REP_TEAMS_OBJECT_IDS=<rep-entra-object-id>
+azd deploy voice-intake
 ```
 
-Notes:
-- **Keep one replica.** Call state, SSE hubs and sockets are in memory; scaling out splits a call across instances.
-- `PUBLIC_BASE_URL` must equal the app's external `https://` URL; ACS uses it for callbacks and the `wss://` media socket.
-  If you create the app before knowing the FQDN, update it afterward.
-- Full variable list: [Configuration](04-configuration.md).
+`azd provision` uses a public bootstrap image to establish the app/identity. **It is not a running gateway**,
+and reprovisioning resets that image: always redeploy afterward, during maintenance.
+For a fresh setup, prefer the staged commands above over `azd up` so identities/agents are ready before startup.
 
-### Grant the app's identity access
-
-The app's **system-assigned managed identity** needs:
-
-| Target | Access |
-|---|---|
-| Foundry project | *Azure AI User* (or equivalent) so it can open voice sessions and call the note-taker |
-| Dataverse | An *application user* for the identity's client id with a role that can read/write the six tables |
-
-### Redeploy a new version
+After the gateway is healthy, create its authenticated Event Grid subscription with the same secret:
 
 ```powershell
-az acr build -r <acr> -t voice-intake:v2 src/VoiceIntake
-az containerapp update -g <rg> -n floorworks-voice-intake --image <acr>.azurecr.io/voice-intake:v2
+$eventGridSecret = azd env get-value EVENTGRID_SECRET
+$gatewayUrl = azd env get-value PUBLIC_BASE_URL
+.\infra\setup-tpe-azure.ps1 -ResourceGroup <gateway-resource-group> -AcsName <acs> `
+  -AppUrl $gatewayUrl -EventGridSecret $eventGridSecret
 ```
 
-Use a new tag each time so the revision changes.
+The gateway application user is **not** the Foundry project application user. Both require their own permissions.
+Neither Bicep nor agent setup automatically grants the gateway's Dataverse access.
 
-## 6 · Smoke test
+## 4 - UI and acceptance
 
-```powershell
-curl https://<fqdn>/healthz                       # ok
-curl "https://<fqdn>/rep?k=<rep-key>"             # Rep Console HTML
-```
+Build/host `src\intake-ui` as a static site, or run `npm ci` and `npm run dev` from that folder for local use.
+Allow the UI's exact origin in `CORS_ORIGINS`. Enter the gateway URL and an `API_KEYS` value in the UI.
+There is no `/rep?k=` page. See [Intake UI](07-rep-console.md).
 
-Then follow the [Demo guide](11-demo-guide.md): open the console, dial the number, speak, and confirm a draft appears
-with **no** service ticket created until Submit.
+Run the [read-only verifier](../infra/README.md) and the [live acceptance checklist](08-operations.md#live-acceptance).
+A healthy endpoint or successful image build alone does not prove Speech, agent tools, recovery or Submit.
 
-## Tear-down
-
-Delete the Container App, the Event Grid subscription, the Teams resource account and number assignment, the Foundry
-agents and toolbox, and (optionally) the Dataverse tables. Draft transcripts can contain personal data; delete the
-`bdm_servicerequestdraft` rows if you are retiring a demo.
+**Both paths require one process/replica and no overlapping old/new gateways during journal recovery.**
+Single-revision mode can still overlap replicas briefly; neither path implements automatic call draining.
+Use the [maintenance procedure](08-operations.md#safe-upgrades-and-rollback), not a rolling deployment during calls.

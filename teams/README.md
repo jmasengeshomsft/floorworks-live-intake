@@ -11,11 +11,15 @@ It handles:
 
 Inputs come from `.env.example`: `TenantId`, `BotAppId`, `AcsImmutableId`, `AcsHost`, `ResourceAccountUpn`, `PhoneNumber`, `RepObjectIds`.
 
+## Preflight
+
+Run `.\preflight-teams.ps1` first (read-only). It validates licenses, number type/assignment, resource account and reps, and exits 1 on any FAIL. See [runbook Step 0](../docs/15-telephony-binding-runbook.md).
+
 ## Rep checklist
 
 - Teams Phone license and Enterprise Voice enabled
 - Signed in to Teams and **Available** (not Do Not Disturb) during calls
-- Entra object id listed in the app's `REP_TEAMS_OBJECT_IDS`
+- Entra object id listed in the gateway's `TRANSFER_TEAMS_OBJECT_IDS`
 
 Failure to add a rep shows as `AddParticipant FAILED` with 480 or 603; see [troubleshooting](../docs/08-operations.md).
 

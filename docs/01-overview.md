@@ -31,18 +31,18 @@ Customer ──► AI receptionist ──(only if asked)──► Human rep join
 | Principle | What it means in practice |
 |---|---|
 | **Draft, then human submit** | Agents never create tickets. They write a persisted draft; the rep is the only path to a real ticket. |
-| **One call, one app** | A single application answers the call, streams the audio and hosts the console. No bot-per-call VMs. |
+| **One call, one gateway** | The Python gateway owns audio/call control and serves the API; the separate React UI reviews drafts. No bot-per-call VMs. |
 | **Native Foundry agents** | The receptionist is a Microsoft Foundry *voice agent*; the note-taker is a Foundry *prompt agent*. Prompts and tools are managed in Foundry, not hard-coded. |
-| **Business data through MCP** | Agents read equipment, quality alerts and tickets through the **Dataverse MCP server**, not custom APIs. |
+| **Business data through MCP** | Agents read accounts, contacts, equipment and tickets through the **Dataverse MCP server**, not custom APIs. |
 | **Rep edits always win** | Once a rep edits a field, the agents stop overwriting it. |
-| **Persist early** | The draft, transcript and summary are saved as the call progresses, so a dropped call still leaves a reviewable draft. |
+| **Persist early** | Dataverse checkpoints preserve committed transcript/extraction work; an outage plus process failure can still lose uncommitted speech. |
 
 ## The customer experience
 
 1. The caller dials the FloorWorks number and hears a greeting within about a second.
 2. The receptionist asks what they need. For an equipment problem it asks for the machine (by name or model; no asset
    number needed) and what is wrong.
-3. The receptionist can look up equipment and open quality alerts for the caller. It never promises a ticket.
+3. The receptionist can look up the caller's account, equipment and open tickets. It never promises a ticket.
 4. If the caller says they want a person, the receptionist transfers: the rep is added to the call and the AI goes quiet.
 5. The rep already sees everything captured so far, so the caller does not repeat themselves.
 
@@ -51,7 +51,7 @@ Customer ──► AI receptionist ──(only if asked)──► Human rep join
 1. Open the console before the call (or pick the live call from the list).
 2. Watch transcript and the **Service Intake Form** fill in. Fields highlight when the agents change them.
 3. Fix anything wrong; link the customer and equipment from suggested matches.
-4. Click **Submit** to create the Service Ticket. The draft is marked *Submitted* and locked.
+4. Save corrections and click **Submit** to create the Service Ticket. Submitted business fields are locked; transcript mirroring can continue.
 
 ## What is in the box
 
@@ -70,3 +70,6 @@ Customer ──► AI receptionist ──(only if asked)──► Human rep join
 
 The proof of concept runs in a single Azure subscription with an Azure Container Apps host, Azure Communication Services,
 a Microsoft Foundry project and a Dataverse developer environment. See [Architecture](02-architecture.md) for details.
+
+Capability descriptions reflect the demonstrated PoC workflow, not acceptance of every current resilience/deployment
+change. Run the [live acceptance checks](08-operations.md#live-acceptance) in the target environment.

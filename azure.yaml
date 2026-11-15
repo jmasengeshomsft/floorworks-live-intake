@@ -4,8 +4,8 @@ metadata:
   template: floorworks-live-intake@0.1.0
 services:
   voice-intake:
-    project: ./src/VoiceIntake
-    language: dotnet
+    project: ./src/intake-gateway
+    language: docker
     host: containerapp
     docker:
       path: ./Dockerfile

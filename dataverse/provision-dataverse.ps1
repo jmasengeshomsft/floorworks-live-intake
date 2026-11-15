@@ -1,15 +1,25 @@
 <#
  Provisions the "Blue Dot Manufacturing Quality & Service" Dataverse solution:
- publisher, solution, 4 tables, lookups, and seed data.
+ publisher, solution, business tables, gateway draft/journal storage, and lookups.
+ Creates or upgrades journal storage in both standard/custom modes. Sample data is opt-in.
  Idempotent: safe to re-run. Requires `az login` with Environment Maker (or better) on the org.
 #>
 [CmdletBinding()]param(
   [Parameter(Mandatory)][string]$OrgUrl,
   [string]$Prefix = 'bdm',
   [int]$OptionPrefix = 10573,
-  [string]$Solution = 'BlueDotMfgQuality'
+  [string]$Solution = 'BlueDotMfgQuality',
+  # Standard tables (account/incident) vs the custom bdm_* tables. Default: taken from the shared config file the gateway uses.
+  [switch]$StandardTables,
+  # Insert sample rows. Off by default: the shipped setup contains zero data. Use seed-demo-data.ps1 (add -Standard for account/case data).
+  [switch]$SeedDemoData
 )
 $ErrorActionPreference = 'Stop'
+if (-not $PSBoundParameters.ContainsKey('StandardTables')) {
+  $cfg = & (Join-Path $PSScriptRoot 'get-config.ps1')
+  $StandardTables = [bool]$cfg.standardTables
+  Write-Host "Dataverse config profile '$($cfg.profile)' -> $(if ($StandardTables) { 'standard tables' } else { 'custom bdm_* tables' })"
+}
 $api = "$OrgUrl/api/data/v9.2"
 $script:tok = $null; $script:tokAt = [datetime]::MinValue
 
@@ -89,12 +99,12 @@ function EnsureTable($name, $display, $plural, $desc, $nameLabel, $attrs) {
     }
   }
 }
-function EnsureLookup($from, $to, $schema, $label) {
+function EnsureLookup($from, $to, $schema, $label, $toLogical = "${Prefix}_$to", $fromLogical = "${Prefix}_$from") {
   $rel = "${Prefix}_${to}_${from}_$($schema.ToLower())"
   if (-not (Exists "RelationshipDefinitions(SchemaName='$rel')")) {
     Dv POST RelationshipDefinitions @{
       '@odata.type' = 'Microsoft.Dynamics.CRM.OneToManyRelationshipMetadata'; SchemaName = $rel
-      ReferencedEntity = "${Prefix}_$to"; ReferencingEntity = "${Prefix}_$from"
+      ReferencedEntity = $toLogical; ReferencingEntity = $fromLogical
       Lookup = @{ AttributeType = 'Lookup'; AttributeTypeName = @{ Value = 'LookupType' }; SchemaName = "${Prefix}_$schema"; DisplayName = (L $label); RequiredLevel = (Req) }
       AssociatedMenuConfiguration = @{ Behavior = 'UseCollectionName'; Group = 'Details'; Order = 10000 }
       CascadeConfiguration = @{ Assign = 'NoCascade'; Delete = 'RemoveLink'; Merge = 'NoCascade'; Reparent = 'NoCascade'; Share = 'NoCascade'; Unshare = 'NoCascade' }
@@ -108,6 +118,7 @@ EnsureTable 'equipment' 'Equipment' 'Equipment' 'Manufacturing equipment / asset
   (StrAttr 'assetnumber' 'Asset Number' 50), (StrAttr 'plant' 'Plant' 100), (StrAttr 'manufacturer' 'Manufacturer' 100),
   (PickAttr 'status' 'Status' @('Operational', 'Degraded', 'Down', 'Under Maintenance')), (DateAttr 'installdate' 'Install Date' $true))
 
+if (-not $StandardTables) {
 EnsureTable 'part' 'Part' 'Parts' 'Manufactured or purchased part' 'Part Name' @(
   (StrAttr 'partnumber' 'Part Number' 50), (StrAttr 'supplier' 'Supplier' 100),
   (PickAttr 'category' 'Category' @('Hydraulic', 'Electrical', 'Mechanical', 'Fastener', 'Consumable')), (DecAttr 'unitcost' 'Unit Cost (USD)'))
@@ -117,16 +128,24 @@ EnsureTable 'qualityalert' 'Quality Alert' 'Quality Alerts' 'Quality issue raise
   (PickAttr 'status' 'Status' @('New', 'Investigating', 'Contained', 'Closed')),
   (MemoAttr 'description' 'Description'), (IntAttr 'defectcount' 'Defect Count'), (DateAttr 'detectedon' 'Detected On'))
 
-EnsureTable 'serviceticket' 'Service Ticket' 'Service Tickets' 'Maintenance / repair work order for equipment' 'Ticket Title' @(
-  (PickAttr 'priority' 'Priority' @('Low', 'Normal', 'High', 'Urgent')),
-  (PickAttr 'status' 'Status' @('Open', 'In Progress', 'Waiting for Parts', 'Resolved')),
-  (MemoAttr 'description' 'Description'), (StrAttr 'assignedtechnician' 'Assigned Technician' 100), (DateAttr 'openedon' 'Opened On'))
-
 EnsureTable 'customer' 'Customer' 'Customers' 'Customer account that calls in for service' 'Account Name' @(
   (StrAttr 'accountnumber' 'Account Number' 50), (StrAttr 'firstname' 'First Name' 100), (StrAttr 'lastname' 'Last Name' 100),
   (StrAttr 'primaryphone' 'Primary Phone' 30), (StrAttr 'email' 'Email Address' 200), (StrAttr 'street' 'Street' 200),
   (StrAttr 'city' 'City' 100), (StrAttr 'state' 'State' 50), (StrAttr 'zip' 'Zip' 20))
 
+}
+
+# Tickets: the custom bdm_serviceticket table, unless the standard mode runs on an org that has the Case (incident) table.
+$hasIncident = $false
+if ($StandardTables) { try { Dv GET "EntityDefinitions(LogicalName='incident')?`$select=LogicalName" | Out-Null; $hasIncident = $true } catch { } }
+if (-not $hasIncident) {
+EnsureTable 'serviceticket' 'Service Ticket' 'Service Tickets' 'Maintenance / repair work order for equipment' 'Ticket Title' @(
+  (PickAttr 'priority' 'Priority' @('Low', 'Normal', 'High', 'Urgent')),
+  (PickAttr 'status' 'Status' @('Open', 'In Progress', 'Waiting for Parts', 'Resolved')),
+  (MemoAttr 'description' 'Description'), (StrAttr 'assignedtechnician' 'Assigned Technician' 100), (DateAttr 'openedon' 'Opened On'))
+}
+
+Write-Host "`nGateway draft and journal storage (required in both standard/custom modes)"
 EnsureTable 'servicerequestdraft' 'Service Request Draft' 'Service Request Drafts' 'Live draft built by the agents during a call; the rep submits it to create the service ticket' 'Draft Title' @(
   (StrAttr 'callid' 'Call ID' 100), (StrAttr 'callerphone' 'Caller Phone' 30), (StrAttr 'customername' 'Customer Name (heard)' 200),
   (StrAttr 'equipmenttext' 'Equipment (heard)' 200), (MemoAttr 'complaint' 'Complaint' 4000),
@@ -135,8 +154,165 @@ EnsureTable 'servicerequestdraft' 'Service Request Draft' 'Service Request Draft
   (PickAttr 'status' 'Draft Status' @('Draft', 'Submitted', 'Discarded')), (StrAttr 'submittedby' 'Submitted By' 200),
   (DateAttr 'submittedon' 'Submitted On'),
   (StrAttr 'contactphone' 'Contact Phone' 30), (StrAttr 'assetnumber' 'Asset Number' 100), (StrAttr 'location' 'Location' 200),
-  (StrAttr 'preferredtime' 'Preferred Time' 200), (StrAttr 'editedfields' 'Rep-edited fields' 300), (MemoAttr 'enrichmentjson' 'Enrichment (AI suggested)' 100000))
+  (StrAttr 'preferredtime' 'Preferred Time' 200), (StrAttr 'editedfields' 'Rep-edited fields' 300), (MemoAttr 'enrichmentjson' 'Enrichment (AI suggested)' 100000),
+  (IntAttr 'transcriptversion' 'Transcript Version'))
 
+EnsureTable 'calljournal' 'Call Journal' 'Call Journals' 'Durable transcript checkpoints, independent of AI extraction' 'Call' @(
+  (StrAttr 'callid' 'Call ID' 100), (MemoAttr 'checkpointjson' 'Call Checkpoint' 1000000),
+  (IntAttr 'version' 'Transcript Version'), (IntAttr 'complete' 'Draft Mirror Complete'))
+
+# Existing duplicate call IDs must be reconciled explicitly, never deleted by provisioning.
+$draftLogical = "${Prefix}_servicerequestdraft"
+$keysPath = "EntityDefinitions(LogicalName='$draftLogical')/Keys"
+$key = (Dv GET "${keysPath}?`$select=SchemaName,KeyAttributes,EntityKeyIndexStatus").value |
+  Where-Object { $_.KeyAttributes.Count -eq 1 -and $_.KeyAttributes[0] -eq "${Prefix}_callid" } | Select-Object -First 1
+if (-not $key) {
+  Dv POST $keysPath @{
+    '@odata.type' = 'Microsoft.Dynamics.CRM.EntityKeyMetadata'
+    SchemaName = "${Prefix}_callidkey"; DisplayName = (L 'Unique Call ID'); KeyAttributes = @("${Prefix}_callid")
+  } $Solution | Out-Null
+}
+for ($attempt = 0; $attempt -lt 60; $attempt++) {
+  $key = (Dv GET "${keysPath}?`$select=SchemaName,KeyAttributes,EntityKeyIndexStatus").value |
+    Where-Object { $_.KeyAttributes.Count -eq 1 -and $_.KeyAttributes[0] -eq "${Prefix}_callid" } | Select-Object -First 1
+  if ($key.EntityKeyIndexStatus -in @('Active', 2)) { break }
+  if ($key.EntityKeyIndexStatus -in @('Failed', 3)) {
+    throw 'Call-ID uniqueness index failed. Reconcile duplicate draft call IDs, reactivate the key, then rerun provisioning.'
+  }
+  Start-Sleep -Seconds 2
+}
+if ($key.EntityKeyIndexStatus -notin @('Active', 2)) { throw 'Call-ID index is not Active yet. Wait for index creation and rerun provisioning.' }
+foreach ($logical in @($draftLogical, "${Prefix}_calljournal")) {
+  $meta = Dv GET "EntityDefinitions(LogicalName='$logical')?`$select=IsOptimisticConcurrencyEnabled"
+  if ($meta.IsOptimisticConcurrencyEnabled -ne $true) { throw "$logical must support optimistic concurrency." }
+}
+Write-Host "Gateway journaling ready: ${Prefix}_calljournal, ${draftLogical}.${Prefix}_transcriptversion, Active call-ID key and optimistic concurrency."
+
+if ($StandardTables) {
+  # The lookup keeps the canonical name CustomerId but points at account; the gateway discovers it from metadata.
+  EnsureLookup 'servicerequestdraft' 'account' 'CustomerId' 'Customer' 'account'
+  EnsureLookup 'equipment' 'account' 'CustomerId' 'Customer' 'account'
+  EnsureLookup 'servicerequestdraft' 'equipment' 'EquipmentId' 'Equipment'
+  # Who called: the standard Contact table (optional role "contact" in config.json)
+  EnsureLookup 'servicerequestdraft' 'contact' 'ContactId' 'Caller' 'contact'
+  if ($hasIncident) {
+    EnsureLookup 'servicerequestdraft' 'incident' 'TicketId' 'Case' 'incident'
+    EnsureLookup 'incident' 'equipment' 'EquipmentId' 'Equipment' "${Prefix}_equipment" 'incident'
+  } else {
+    EnsureLookup 'serviceticket' 'account' 'CustomerId' 'Customer' 'account'
+    EnsureLookup 'serviceticket' 'equipment' 'EquipmentId' 'Equipment'
+    EnsureLookup 'serviceticket' 'contact' 'ContactId' 'Caller' 'contact'
+    EnsureLookup 'servicerequestdraft' 'serviceticket' 'TicketId' 'Service Ticket'
+  }
+  Write-Host "Standard tables mode: customers = account, tickets = $(if ($hasIncident) { 'incident' } else { 'bdm_serviceticket' }). Deploy with the matching dataverse\config.json."
+  if (-not $SeedDemoData) { Write-Host 'No data seeded. Optional: .\seed-demo-data.ps1 -Standard'; return }
+
+  # ---------- Standard-profile sample data: accounts, equipment, cases ----------
+  function FindId($set, $idCol, $filter) { $r = (Dv GET "${set}?`$select=$idCol&`$filter=$filter").value; if ($r) { $r[0].$idCol } }
+  function Esc($s) { $s.Replace("'", "''") }
+  $eqSet = (Dv GET "EntityDefinitions(LogicalName='${Prefix}_equipment')?`$select=EntitySetName").EntitySetName
+  $statusOpts = (Dv GET "EntityDefinitions(LogicalName='${Prefix}_equipment')/Attributes(LogicalName='${Prefix}_status')/Microsoft.Dynamics.CRM.PicklistAttributeMetadata?`$select=LogicalName&`$expand=OptionSet(`$select=Options)").OptionSet.Options
+  function EqStatus($l) { ($statusOpts | Where-Object { $_.Label.UserLocalizedLabel.Label -eq $l }).Value }
+
+  $accounts = @(
+    @{ name = 'FloorWorks'; num = 'ACC-1000'; phone = '(405) 602-9804'; email = 'jmasengesho@inyarwanda.com'; city = 'Oklahoma City'; state = 'OK'; zip = '73102' },
+    @{ name = 'Northwind Manufacturing'; num = 'ACC-1001'; phone = '(312) 555-0101'; email = 'service@northwind.example.com'; city = 'Chicago'; state = 'IL'; zip = '60601' },
+    @{ name = 'Contoso Plastics'; num = 'ACC-1002'; phone = '312-555-0102'; email = 'maintenance@contoso-plastics.example.com'; city = 'Elgin'; state = 'IL'; zip = '60120' },
+    @{ name = 'Fabrikam Metalworks'; num = 'ACC-1003'; phone = '+1 414 555 0103'; email = 'ops@fabrikam-metal.example.com'; city = 'Milwaukee'; state = 'WI'; zip = '53202' },
+    @{ name = 'Adventure Works Packaging'; num = 'ACC-1004'; phone = '6165550104'; email = 'plant@adventureworks-pkg.example.com'; city = 'Grand Rapids'; state = 'MI'; zip = '49503' },
+    @{ name = 'Tailspin Fabrication'; num = 'ACC-1005'; phone = '(563) 555-0105'; email = 'service@tailspin.example.com'; city = 'Davenport'; state = 'IA'; zip = '52801' },
+    @{ name = 'Litware Thermal Systems'; num = 'ACC-1006'; phone = '+1-317-555-0106'; email = 'support@litware-thermal.example.com'; city = 'Indianapolis'; state = 'IN'; zip = '46204' })
+  $acId = @{}
+  foreach ($a in $accounts) {
+    $id = FindId 'accounts' 'accountid' "name eq '$(Esc $a.name)'"
+    if (-not $id) {
+      $id = PostId 'accounts' @{ name = $a.name; accountnumber = $a.num; telephone1 = $a.phone; emailaddress1 = $a.email
+        address1_city = $a.city; address1_stateorprovince = $a.state; address1_postalcode = $a.zip }
+    }
+    $acId[$a.name] = $id
+  }
+  Write-Host "  accounts: $($acId.Count)"
+
+  # People who call in: contacts parented to their account, with mobile and direct lines in mixed formats.
+  $contacts = @(
+    @{ f = 'Joseph'; l = 'Masengesho'; acct = 'FloorWorks'; mobile = '(405) 602-9804'; tel = ''; title = 'Operations Lead'; email = 'jmasengesho@inyarwanda.com'; primary = $true },
+    @{ f = 'Dana'; l = 'Whitfield'; acct = 'FloorWorks'; mobile = '405-555-0142'; tel = '(405) 555-0100'; title = 'Maintenance Supervisor'; email = 'dana.whitfield@floorworks.example.com' },
+    @{ f = 'Priya'; l = 'Shah'; acct = 'Northwind Manufacturing'; mobile = '312.555.0111'; tel = '(312) 555-0101'; title = 'Plant Manager'; email = 'priya.shah@northwind.example.com'; primary = $true },
+    @{ f = 'Marcus'; l = 'Bell'; acct = 'Northwind Manufacturing'; mobile = '+1 312 555 0112'; tel = ''; title = 'Maintenance Lead'; email = 'marcus.bell@northwind.example.com' },
+    @{ f = 'Elena'; l = 'Torres'; acct = 'Contoso Plastics'; mobile = '(847) 555-0121'; tel = '312-555-0102'; title = 'Production Manager'; email = 'elena.torres@contoso-plastics.example.com'; primary = $true },
+    @{ f = 'Ben'; l = 'Carter'; acct = 'Contoso Plastics'; mobile = '847-555-0122'; tel = ''; title = 'Press Technician'; email = 'ben.carter@contoso-plastics.example.com' },
+    @{ f = 'Hannah'; l = 'Kowalski'; acct = 'Fabrikam Metalworks'; mobile = '+1 414 555 0131'; tel = '+1 414 555 0103'; title = 'Operations Director'; email = 'hannah.kowalski@fabrikam-metal.example.com'; primary = $true },
+    @{ f = 'Raj'; l = 'Patel'; acct = 'Adventure Works Packaging'; mobile = '6165550141'; tel = ''; title = 'Line Supervisor'; email = 'raj.patel@adventureworks-pkg.example.com'; primary = $true },
+    @{ f = 'Grace'; l = 'Nguyen'; acct = 'Tailspin Fabrication'; mobile = '(563) 555-0151'; tel = '(563) 555-0105'; title = 'Shop Manager'; email = 'grace.nguyen@tailspin.example.com'; primary = $true },
+    @{ f = 'Tom'; l = 'Alvarez'; acct = 'Litware Thermal Systems'; mobile = '+1-317-555-0161'; tel = ''; title = 'Facilities Engineer'; email = 'tom.alvarez@litware-thermal.example.com'; primary = $true })
+  foreach ($k in $contacts) {
+    $body = @{ firstname = $k.f; lastname = $k.l; emailaddress1 = $k.email; mobilephone = $k.mobile; jobtitle = $k.title
+      'parentcustomerid_account@odata.bind' = "/accounts($($acId[$k.acct]))" }
+    if ($k.tel) { $body.telephone1 = $k.tel }
+    $cid = FindId 'contacts' 'contactid' "emailaddress1 eq '$(Esc $k.email)'"
+    if ($cid) { Dv PATCH "contacts($cid)" $body | Out-Null } else { $cid = PostId 'contacts' $body }
+    if ($k.primary) { Dv PATCH "accounts($($acId[$k.acct]))" @{ 'primarycontactid@odata.bind' = "/contacts($cid)" } | Out-Null }
+  }
+  Write-Host "  contacts: $($contacts.Count) (Joseph Masengesho on FloorWorks)"
+
+  $equipment = @(
+    @{ name = 'CNC Mill 3'; asset = 'EQ-1003'; plant = 'Chicago, IL'; mfr = 'Haas'; status = 'Operational'; install = '2021-03-15'; owner = 'FloorWorks' },
+    @{ name = 'Injection Press 2'; asset = 'EQ-2002'; plant = 'Elgin, IL'; mfr = 'Engel'; status = 'Degraded'; install = '2019-09-01'; owner = 'Contoso Plastics' },
+    @{ name = 'Robotic Welder R7'; asset = 'EQ-3007'; plant = 'Milwaukee, WI'; mfr = 'FANUC'; status = 'Operational'; install = '2022-06-20'; owner = 'FloorWorks' },
+    @{ name = 'Packaging Line A'; asset = 'EQ-4001'; plant = 'Grand Rapids, MI'; mfr = 'Bosch Packaging'; status = 'Under Maintenance'; install = '2020-01-10'; owner = 'Adventure Works Packaging' },
+    @{ name = 'Hydraulic Press H1'; asset = 'EQ-5001'; plant = 'Davenport, IA'; mfr = 'Schuler'; status = 'Down'; install = '2018-11-05'; owner = 'FloorWorks' },
+    @{ name = 'Heat Treat Furnace F2'; asset = 'EQ-6002'; plant = 'Indianapolis, IN'; mfr = 'Ipsen'; status = 'Operational'; install = '2023-02-28'; owner = 'Litware Thermal Systems' })
+  $eqId = @{}
+  foreach ($e in $equipment) {
+    $id = FindId $eqSet "${Prefix}_equipmentid" "bdm_name eq '$(Esc $e.name)'"
+    $ownerBind = @{ 'bdm_CustomerId@odata.bind' = "/accounts($($acId[$e.owner]))" }
+    if (-not $id) {
+      $id = PostId $eqSet (@{ bdm_name = $e.name; bdm_assetnumber = $e.asset; bdm_plant = $e.plant; bdm_manufacturer = $e.mfr
+        bdm_status = (EqStatus $e.status); bdm_installdate = $e.install } + $ownerBind)
+    } else { Dv PATCH "$eqSet($id)" $ownerBind | Out-Null }
+    $eqId[$e.name] = $id
+  }
+  Write-Host "  equipment: $($eqId.Count)"
+
+  if (-not $hasIncident) {
+    # No Case table (Customer Service not installed): sample tickets go to bdm_serviceticket, owned by the same accounts.
+    function TkOpt($attr, $label) {
+      $r = Dv GET "EntityDefinitions(LogicalName='${Prefix}_serviceticket')/Attributes(LogicalName='${Prefix}_$attr')/Microsoft.Dynamics.CRM.PicklistAttributeMetadata?`$select=LogicalName&`$expand=OptionSet(`$select=Options)"
+      ($r.OptionSet.Options | Where-Object { $_.Label.UserLocalizedLabel.Label -eq $label }).Value
+    }
+    $tkSet = (Dv GET "EntityDefinitions(LogicalName='${Prefix}_serviceticket')?`$select=EntitySetName").EntitySetName
+    $tickets = @(
+      @{ t = 'Replace leaking HV-220 valve on press H1'; d = 'Press down; valve replacement pending quarantine-free stock.'; p = 'Urgent'; s = 'Waiting for Parts'; tech = 'Dana Whitfield'; on = '2026-10-02T06:00:00Z'; e = 'Hydraulic Press H1' },
+      @{ t = 'Recalibrate welder R7 encoder'; d = 'Re-home encoder and run seam validation coupons.'; p = 'High'; s = 'In Progress'; tech = 'Luis Ortega'; on = '2026-10-04T10:30:00Z'; e = 'Robotic Welder R7' },
+      @{ t = 'Swap spindle bearing on CNC Mill 3'; d = 'Bearing replaced; runout back to 2 microns.'; p = 'Normal'; s = 'Resolved'; tech = 'Priya Nair'; on = '2026-09-28T13:00:00Z'; e = 'CNC Mill 3' },
+      @{ t = 'Inspect furnace F2 heating elements'; d = 'Full resistance check on all element banks.'; p = 'High'; s = 'Open'; tech = 'Marc Dubois'; on = '2026-10-01T07:45:00Z'; e = 'Heat Treat Furnace F2' },
+      @{ t = 'Packaging line A preventive maintenance'; d = 'Quarterly PM including torque audit.'; p = 'Low'; s = 'In Progress'; tech = 'Sofie Peeters'; on = '2026-10-06T08:00:00Z'; e = 'Packaging Line A' },
+      @{ t = 'Injection press 2 hydraulic pressure drift'; d = 'Pressure drifting 5 percent during hold phase.'; p = 'Normal'; s = 'Open'; tech = 'Carlos Mendez'; on = '2026-10-07T12:10:00Z'; e = 'Injection Press 2' })
+    $ownerOf = @{}; foreach ($e in $equipment) { $ownerOf[$e.name] = $e.owner }
+    foreach ($k in $tickets) {
+      $exId = FindId $tkSet "${Prefix}_serviceticketid" "bdm_name eq '$(Esc $k.t)'"
+      if ($exId) { Dv PATCH "$tkSet($exId)" @{ 'bdm_CustomerId@odata.bind' = "/accounts($($acId[$ownerOf[$k.e]]))" } | Out-Null; continue }
+      PostId $tkSet @{ bdm_name = $k.t; bdm_description = $k.d; bdm_priority = (TkOpt 'priority' $k.p); bdm_status = (TkOpt 'status' $k.s)
+        bdm_assignedtechnician = $k.tech; bdm_openedon = $k.on
+        'bdm_CustomerId@odata.bind' = "/accounts($($acId[$ownerOf[$k.e]]))"; 'bdm_EquipmentId@odata.bind' = "/${eqSet}($($eqId[$k.e]))" } | Out-Null
+    }
+    Write-Host "  tickets: $($tickets.Count) (bdm_serviceticket)"
+    return
+  }
+  # prioritycode: 1 High, 2 Normal, 3 Low
+  $cases = @(
+    @{ t = 'Hydraulic Press H1 valve leaking'; d = 'Valve leaking at the seat; press taken offline.'; p = 1; e = 'Hydraulic Press H1'; a = 'Tailspin Fabrication' },
+    @{ t = 'Injection Press 2 pressure drift'; d = 'Hold pressure drifting about 5 percent during hold phase.'; p = 2; e = 'Injection Press 2'; a = 'Contoso Plastics' },
+    @{ t = 'Robotic Welder R7 encoder error'; d = 'Intermittent encoder position error; seams out of tolerance.'; p = 1; e = 'Robotic Welder R7'; a = 'Fabrikam Metalworks' },
+    @{ t = 'Packaging Line A preventive maintenance'; d = 'Quarterly PM including torque audit.'; p = 3; e = 'Packaging Line A'; a = 'Adventure Works Packaging' })
+  foreach ($c in $cases) {
+    if (FindId 'incidents' 'incidentid' "title eq '$(Esc $c.t)'") { continue }
+    PostId 'incidents' @{ title = $c.t; description = $c.d; prioritycode = $c.p
+      'customerid_account@odata.bind' = "/accounts($($acId[$c.a]))"; 'bdm_EquipmentId@odata.bind' = "/${eqSet}($($eqId[$c.e]))" } | Out-Null
+  }
+  Write-Host "  cases: $($cases.Count)"
+  return
+}
 EnsureLookup 'equipment' 'customer' 'CustomerId' 'Customer'
 EnsureLookup 'servicerequestdraft' 'customer' 'CustomerId' 'Customer'
 EnsureLookup 'servicerequestdraft' 'equipment' 'EquipmentId' 'Equipment'
@@ -146,6 +322,8 @@ EnsureLookup 'qualityalert' 'part' 'PartId' 'Part'
 EnsureLookup 'qualityalert' 'equipment' 'EquipmentId' 'Equipment'
 EnsureLookup 'serviceticket' 'equipment' 'EquipmentId' 'Equipment'
 EnsureLookup 'serviceticket' 'qualityalert' 'QualityAlertId' 'Related Quality Alert'
+
+if (-not $SeedDemoData) { Write-Host 'Tables ready, no data seeded. Optional: .\seed-demo-data.ps1'; return }
 
 # ---------- Seed data ----------
 function Sets($t) { (Dv GET "EntityDefinitions(LogicalName='${Prefix}_$t')?`$select=EntitySetName").EntitySetName }
@@ -223,4 +401,3 @@ foreach ($e in $ownership.Keys) {
 }
 
 Write-Host "Done. equipment=$($eq.Count) parts=$($pt.Count) alerts=$($qa.Count)"
-

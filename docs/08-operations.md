@@ -1,87 +1,82 @@
-# 08 · Operations & troubleshooting
+# 08 - Operations and troubleshooting
 
-## Where to look
-
-| Need | Tool |
-|---|---|
-| Is the app up? | `GET /healthz` |
-| Recent app logs | `az containerapp logs show -g <rg> -n floorworks-voice-intake --tail 100` (max 300, noisy) |
-| Full call history | Log Analytics table `ContainerAppConsoleLogs_CL` |
-| What the draft holds | Dataverse table `bdm_servicerequestdraft` or `GET /api/rep/draft/{callId}` |
-| Active revision | `az containerapp revision list -g <rg> -n floorworks-voice-intake -o table` |
-
-### Log Analytics query for one call
+## First checks
 
 ```powershell
-$ws = az containerapp env show -g <rg> -n <aca-env> --query properties.appLogsConfiguration.logAnalyticsConfiguration.customerId -o tsv
-az monitor log-analytics query -w $ws --analytics-query "
-ContainerAppConsoleLogs_CL
-| where ContainerAppName_s == 'floorworks-voice-intake' and Log_s has '<callId>'
-| project t=TimeGenerated, msg=substring(Log_s, 0, 300)
-| order by t asc" -o table
+.\infra\verify-gateway.ps1 -ResourceGroup <rg> -AppName <app>
+az containerapp revision list -g <rg> -n <app> -o table
+az containerapp logs show -g <rg> -n <app> --tail 100 --format text
 ```
 
-KQL notes: use `substring()` (not `substr`); format time with `.ToString('HH:mm:ss')`.
+The verifier is read-only. Check the intended image/revision, not just the public `/healthz` response:
+an old healthy revision can mask a failed new one. Use the call ID to correlate logs, `/v1/calls/{id}`,
+the Dataverse draft and journal. Logs/transcripts may contain personal data; restrict access.
 
-### Log lines to know
+## Triage
 
-| Line | Meaning |
+| Symptom | Check/action |
 |---|---|
-| `[id] ANSWER OK caller=... conn=...` | Call answered; caller number captured |
-| `[id] WS connected; rep UI: ...` | Media socket opened (can appear again on reconnect) |
-| `[id] voice agent connected (name)` | Receptionist session is live |
-| `[id] STT <role>: text` | Recognized speech and who said it |
-| `[id] transfer_to_rep requested` | Receptionist asked for a rep |
-| `[id] rep joined; AI muted` | Transfer worked |
-| `[id] AddParticipant FAILED ...` | Rep did not join; AI resumes |
-| `[id] draft save error` | Dataverse write failed |
-| `[id] MediaStreaming FAILED` | ACS could not stream audio |
-| `STT canceled` | Speech key, region or network problem |
+| New revision fails; `/healthz` times out | Read startup logs first. Configuration, schema and journal verification can stop startup before HTTP is available |
+| `required integrity columns cannot be disabled` | Check draft transcript version and journal mappings. Run the approved Dataverse provisioner/migration; do not disable integrity fields |
+| Missing journal/key or key not Active | Re-run schema provisioning; reconcile duplicate call IDs explicitly if needed. Wait for key activation before deployment |
+| Dataverse 403 | Register the **gateway** application user and its table privileges. Foundry project access is separate |
+| Event Grid delivers but no call starts | Matching `EVENTGRID_SECRET`, correct `/api/incoming` URL, intended event filter and `LINE_NUMBERS`; exclude competing subscriptions |
+| Teams rejects with SIP 480 / code 10140 | Bot calling channel, resource-account/ACS binding and tenant consent; use the [telephony runbook](15-telephony-binding-runbook.md) |
+| Answered but no AI audio | Foundry endpoint/agent name, managed-identity role and voice model availability; inspect session errors |
+| No transcript after transfer | `/v1/config` live-notes status, actual Speech resource/region/custom subdomain, Speech role/token refresh and per-speaker audio |
+| Tool approval or `CONSENT_REQUIRED` | Managed-identity Dataverse connection, project application user, read-only allowlist and approval settings; republish with [agent setup](17-agent-setup.md) |
+| Rep does not ring | `TRANSFER_TEAMS_OBJECT_IDS`, Teams sign-in/availability, licensing and Enterprise Voice |
+| UI 401 / browser CORS failure | Current API key, gateway URL and exact `CORS_ORIGINS`; the UI is separately hosted |
+| Extraction `failed` | Inspect status/error and agent output contract. Fix permanent errors before retry; the prior valid result remains visible |
+| `persistenceError` / checkpoint-stage error | Dataverse availability, identity, column limits and permissions. Compare transcript length with `checkpointVersion`; visible text is not proof of durability |
+| Edit/Submit 409 or 422 | Refresh and review concurrent changes; supply valid field types and compatible customer/equipment/contact links |
+| SSE disconnect/resync | Client must reload snapshots and reconnect with the server cursor; the shipped UI handles this |
 
-## Call triage playbook
+For detailed PowerShell deployment/Speech migration diagnostics, see [16](16-intake-gateway-deploy.md).
 
-Work from the symptom to the cause.
+## Safe upgrades and rollback
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| Rings but nobody answers; no `ANSWER OK` | Event Grid not delivering, or app returned an error | Check the Event Grid subscription and `/api/incoming` logs; confirm the filter is not excluding the call |
-| Call rejected by Teams, SIP 480 / code 10140 | Bot has no Teams calling channel | Re-run `infra/setup-tpe-azure.ps1`; check the bot channel |
-| Answers, silence, no AI | `voice agent connect FAILED` | Check Foundry endpoint, app identity role on Foundry, preview header |
-| AI hears nothing / no transcript | `STT canceled` or media streaming failed | Check `SPEECH_KEY`/`SPEECH_REGION`; confirm `PUBLIC_BASE_URL` is `https` and reachable as `wss` |
-| Caller hangs up after a few seconds | Greeting too long or slow | Check latency; shorten the instructions' greeting |
-| AI says it cannot look up equipment | Toolbox connection failed (`CONSENT_REQUIRED`) | Use the managed-identity connection and republish the toolbox and voice agent |
-| Unexpected transfer | Voice agent instructions allow it | Confirm "only on explicit request" wording in the current agent version |
-| `AddParticipant FAILED` 480 *Temporarily Unavailable* | Rep offline, in Do Not Disturb, or not Enterprise Voice enabled | Sign the rep into Teams, set Available, verify voice enablement |
-| `AddParticipant FAILED` 603 *Decline* | Rep declined or did not answer | Retry; consider multiple reps in `REP_TEAMS_OBJECT_IDS` |
-| AI greets again mid-call | ACS reconnected the media socket and the voice agent restarted | Known limit; see [roadmap](10-roadmap.md) |
-| Draft has no customer or equipment | Caller phone not in `bdm_customer`; equipment not matched | Seed the customer; rep picks links in the console |
-| Equipment mis-transcribed ("CNC Mail") | 24 kHz to 16 kHz resample and no phrase list | Add a Speech phrase list with equipment names |
-| Draft empty after a short call | Caller hung up before speaking | Normal; the draft is created from the first transcript or at finalize |
-| `/rep` returns 401 | Missing or wrong key | Pass `?k=<REP_KEY>` |
-| Ticket not created after Submit | Customer or equipment not linked, draft already submitted, or Dataverse error | Link both in the console; read the `400` error text; check the app identity's table privileges |
-| Dataverse 403 from the app | App identity lacks a role or application user is missing | Create the application user and assign a role |
+The gateway requires **one process/replica per journal/draft dataset**. PowerShell and Bicep configure min/max replicas
+to one, but that is not distributed call ownership. Container Apps single-revision mode can briefly overlap revisions.
+Neither deployment path implements automatic call draining.
 
-## Routine tasks
+1. Pause inbound routing upstream and finish active calls; allow final extraction/checkpoint work to complete.
+2. Stop/deactivate all old gateway revisions and confirm no other gateway process uses the dataset.
+3. Apply approved schema changes and runtime permissions. Reconcile failed/pending keys before proceeding.
+4. Deploy the new immutable image/configuration. After any `azd provision`, redeploy the actual gateway image.
+5. Confirm the intended revision is healthy, only the intended revision is active, and verifier/live smoke checks pass.
+6. Resume routing and monitor checkpoint, extraction, Speech and delivery failures.
 
-| Task | How |
-|---|---|
-| Rotate the rep key | `az containerapp secret set ... rep-key=<new>` then restart the revision |
-| Rotate the ACS or Speech key | Update the Container Apps secret, restart the revision |
-| Add a rep | Add their Entra object id to `REP_TEAMS_OBJECT_IDS`; enable Enterprise Voice; restart |
-| Roll back | `az containerapp ingress traffic set` to the previous revision, or redeploy the older image tag |
-| Update the AI behavior | Publish a new agent version ([AI agents](06-agents.md)); no app redeploy needed |
-| Clean up test data | Delete test rows in `bdm_servicerequestdraft` and `bdm_serviceticket` |
+Rollback is also a maintenance operation: stop the new gateway before activating an older compatible revision/image.
+Do not roll back to the removed C# gateway or code that cannot honor the current journal/schema invariants.
+Keep old secrets only when an intentional compatible rollback still needs them; rotate/delete them under your policy.
 
-## Operational limits to remember
+## Recovery and retention
 
-- **One replica.** Call state, SSE and sockets live in memory. A restart mid-call loses live state (the persisted draft survives).
-- **Deploying during a call drops the call.** Do not deploy while testing.
-- **Log retention** follows the Log Analytics workspace settings; transcripts in logs may contain personal data.
+Dataverse holds transcript/extraction checkpoints and drafts. Restart restores incomplete journal work as
+**ended/recovered** calls and resumes unfinished extraction/persistence. It does not restore live audio, Teams calls,
+SSE replay history or deferred-function side effects.
 
-## Health checklist before a demo or go-live
+The recovery point is the last successful Dataverse checkpoint. During a Dataverse outage, new speech remains in memory;
+simultaneous process failure can lose it. Recovery time depends on service availability and backlog.
+Check `checkpointVersion`, `persistenceError` and extraction status before treating a call as fully persisted/final.
 
-- [ ] `/healthz` returns `ok` and the latest revision is the one you expect
-- [ ] Rep signed in to Teams, status Available
-- [ ] Rep Console open and shows the recent drafts
-- [ ] Test call: greeting within about a second, equipment lookup works, draft appears
-- [ ] No unexpected rows in `bdm_serviceticket`
+Ended in-memory calls expire after one hour/500-call retention; event replay and delivery queues are bounded.
+This is not Dataverse retention. Apply a coordinated policy to completed journal rows, draft transcripts, tickets/notes
+and logs; recover/reconcile incomplete journals before deletion. Webhooks are best-effort, not a durable outbox.
+
+## Live acceptance
+
+Run in an approved test environment with the **actual gateway identity**, recording image, profile, call IDs and outcomes:
+
+- Startup/schema/permissions verification, including both custom and standard table profiles where supported.
+- Real call, read-only agent lookup, rep handoff, both speakers' notes, edit protection and human Submit.
+- Repeat/concurrent Submit and response-loss retry: one ticket, no lost rep edits or incompatible links.
+- Long-running Speech recognition/token renewal and recoverable stream failure.
+- Model/Dataverse throttling/outage: visible failure/retry, durable checkpoint boundary and recovery after restart.
+- Restart with unfinished extraction: committed notes recover without replaying functions or ticket/customer side effects.
+- UI slow-consumer resync and bounded queue/load behavior.
+- Maintenance deployment/rollback with no overlapping gateways and no active-call cutover.
+
+A container build, successful deployment or `/healthz` response is **not** acceptance of those scenarios.
+Track unresolved lifecycle, authorization, delivery and operational work in the [engineering backlog](19-intake-gateway-engineering-review.md).

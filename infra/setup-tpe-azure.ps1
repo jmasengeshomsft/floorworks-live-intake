@@ -3,16 +3,17 @@
   - Entra app (bot identity) for the Teams resource account
   - Azure Bot with the Teams channel + calling enabled (without it Teams rejects calls with SIP 480 / code 10140)
   - ACS service principal in the tenant
-  - Event Grid subscription routing IncomingCall events to the call controller
+  - Optional authenticated Event Grid subscription (requires EventGridSecret and a running gateway)
  Run BEFORE teams/setup-teams.ps1. Prints the values that script needs.
 #>
 [CmdletBinding()]
 param(
   [Parameter(Mandatory)][string]$ResourceGroup,
   [Parameter(Mandatory)][string]$AcsName,
-  [Parameter(Mandatory)][string]$AppUrl,     # https://<voice-intake-fqdn>
+  [Parameter(Mandatory)][string]$AppUrl,     # https://<gateway-fqdn>
   [string]$BotName = 'floorworks-intake-bot',
-  [string]$EventSubscriptionName = 'floorworks-intake-incoming'
+  [string]$EventSubscriptionName = 'floorworks-intake-incoming',
+  [string]$EventGridSecret
 )
 $ErrorActionPreference = 'Stop'
 $AppUrl = $AppUrl.TrimEnd('/')
@@ -31,14 +32,21 @@ az bot msteams create -g $ResourceGroup -n $BotName --enable-calling true --call
 $acsSp = az ad sp show --id 1fd5118e-2576-4263-8130-9503064c837a --query id -o tsv 2>$null
 if (-not $acsSp) { az ad sp create --id 1fd5118e-2576-4263-8130-9503064c837a -o none }
 
-$acsId = az communication show -n $AcsName -g $ResourceGroup --query id -o tsv
-$sysTopic = az eventgrid system-topic list -g $ResourceGroup --query "[?source=='$acsId'].name | [0]" -o tsv
-if (-not $sysTopic) {
-  $sysTopic = "$AcsName-topic"
-  az eventgrid system-topic create -g $ResourceGroup -n $sysTopic --source $acsId --topic-type Microsoft.Communication.CommunicationServices --location global -o none
+if (-not [string]::IsNullOrWhiteSpace($EventGridSecret)) {
+  $acsId = az communication show -n $AcsName -g $ResourceGroup --query id -o tsv
+  $sysTopic = az eventgrid system-topic list -g $ResourceGroup --query "[?source=='$acsId'].name | [0]" -o tsv
+  if (-not $sysTopic) {
+    $sysTopic = "$AcsName-topic"
+    az eventgrid system-topic create -g $ResourceGroup -n $sysTopic --source $acsId --topic-type Microsoft.Communication.CommunicationServices --location global -o none
+    if ($LASTEXITCODE -ne 0) { throw 'Event Grid system topic creation failed.' }
+  }
+  $endpoint = "$AppUrl/api/incoming?s=$([uri]::EscapeDataString($EventGridSecret))"
+  az eventgrid system-topic event-subscription create -g $ResourceGroup --system-topic-name $sysTopic -n $EventSubscriptionName `
+    --endpoint $endpoint --endpoint-type webhook --included-event-types Microsoft.Communication.IncomingCall -o none
+  if ($LASTEXITCODE -ne 0) { throw 'Authenticated Event Grid subscription creation failed. Confirm the gateway is running and EVENTGRID_SECRET matches.' }
+} else {
+  Write-Warning 'Event Grid setup skipped: deploy-gateway.ps1 wires it automatically, or rerun this script after gateway deployment with -EventGridSecret matching EVENTGRID_SECRET.'
 }
-az eventgrid system-topic event-subscription create -g $ResourceGroup --system-topic-name $sysTopic -n $EventSubscriptionName `
-  --endpoint "$AppUrl/api/incoming" --endpoint-type webhook --included-event-types Microsoft.Communication.IncomingCall -o none
 
 $acsImmutable = az communication show -n $AcsName -g $ResourceGroup --query immutableResourceId -o tsv
 Write-Host ''

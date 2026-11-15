@@ -1,69 +1,57 @@
-# 09 · Security & compliance
+# 09 - Security and compliance
 
-This is a proof-of-concept architecture with sound foundations and several deliberate shortcuts. This page lists both, so
-a security reviewer can see what is safe today and what must change before production.
+This proof of concept has explicit integrity/authentication controls, but is not production-hardened.
+Local regression coverage is not a penetration test or live-service certification.
 
-## Identity and secrets
+## Current controls and limits
 
-| Asset | Mechanism | Assessment |
-|---|---|---|
-| VoiceIntake → Foundry, Dataverse | System-assigned managed identity | Good. No secrets |
-| Foundry agents → Dataverse MCP | Project managed identity connection | Good. No per-user tokens |
-| ACS connection string, Speech key | Container Apps secrets | Acceptable; prefer Entra auth for ACS/Speech where supported |
-| Rep Console and `/api/rep/*` | One shared `REP_KEY` | **Weak.** No per-user identity, passed in a URL |
-| `/events/{callId}` SSE | None | **Weak.** Anyone with a call id can read transcripts |
-| `/api/incoming` Event Grid webhook | Handshake only | Validate the Event Grid source/signature before production |
-| Local `.env` files | Git-ignored | Keep out of source control; never share them |
+| Boundary | Current mechanism / limitation |
+|---|---|
+| Gateway to Foundry/Dataverse | Managed identity in Azure; separate Dataverse application user required |
+| Gateway to Speech | Entra/managed identity with Speech resource ID, custom subdomain and Speech User role; legacy keys remain supported |
+| Gateway to ACS | Connection string in supplied deployment paths; runtime also supports an Entra-authenticated ACS endpoint |
+| Foundry to Dataverse | Project managed-identity connection and read-only tool allowlist; enforce matching privileges in Dataverse |
+| Consumer `/v1` API, including SSE | Shared `API_KEYS`; no per-user, per-call or tenant authorization |
+| Event Grid incoming calls | Required shared `EVENTGRID_SECRET`; intended number/identity filtering is separate |
+| ACS callbacks/media | Per-call HMAC token plus enforced ACS JWT validation outside local development |
+| Rep/AI writes | Typed contracts, relationship validation, rep-edit ownership, ETags and atomic/idempotent Submit |
+| Outbound notifications | HMAC when configured, bounded best-effort retries; consumers need replay/idempotency controls |
 
-## Authorization
+Only the gateway Submit endpoint creates tickets in this workflow. Shared API keys still permit their holders to invoke
+that endpoint; "human Submit" is not a substitute for identity-based authorization. `submittedBy` is caller-supplied.
+The UI stores its API key in browser localStorage and SSE authentication can put it in a query string.
+Protect browser profiles, URLs, proxy logs and screenshots accordingly.
 
-| Item | Today | Target |
-|---|---|---|
-| Dataverse role for both identities | **System Administrator** | Custom role limited to the six `bdm_` tables: read all; create/write on drafts; create on tickets (app only); read-only for the Foundry identity |
-| Who can create tickets | Anyone with the rep key | Authenticated reps only, with auditing |
-| What agents can write | Instructions forbid writes; the note-taker's only write is through the app's draft save | Enforce with a read-only Dataverse role for the Foundry identity, so a prompt change cannot create records |
+## Permissions and secret handling
 
-The strongest control is already in the design: **only the app's Submit endpoint creates tickets.** Back it with a
-read-only role for the Foundry identity so the rule does not depend on prompt text.
+The gateway and Foundry project are **different principals**. Give the gateway only the required journal/draft
+read/create/write, business lookup/customer/ticket/annotation and relationship privileges. Keep the project's business
+access read-only and exclude the journal from agent tools. The demo scripts' **System Administrator** role is too broad
+for customer use and must be replaced with reviewed roles.
+
+Both deployment paths place API/HMAC/ACS credentials in Container Apps secrets. azd environments and private parameter
+files still contain sensitive local values: protect them and never commit/share them. `LOCAL_DEV=1` is never appropriate
+on a public deployment. Key Vault integration and coordinated secret rotation remain hardening work.
 
 ## Data handling
 
-| Data | Where it lives | Notes |
-|---|---|---|
-| Call audio | In flight only; not stored by this app | ACS may record only if you enable it. This app does not |
-| Transcript | Container logs, Dataverse `bdm_transcript`, sent to Foundry agents | May include names, phone numbers, addresses |
-| Caller phone | Dataverse, logs | Personal data |
-| Draft | Dataverse | Retain per policy; add a cleanup job |
+Audio is streamed, not recorded by this application. Transcripts/caller information can appear in memory, Dataverse
+drafts, journal checkpoint JSON, model requests and logs. Tickets/overflow notes can hold further copies.
+Define retention, deletion, access controls and data-residency obligations for **all** copies.
 
-Recommendations:
-- Play a **recording and AI disclosure** at the start of the call, per local law. This is not implemented ([roadmap](10-roadmap.md)).
-- Set a retention policy for `bdm_servicerequestdraft` and for the Log Analytics workspace.
-- Limit who can read transcripts in Dataverse (field or row security).
-- Avoid logging full transcripts at information level in production.
-- Confirm Foundry and Speech data-residency settings match your obligations.
+Dataverse-only durability preserves successful checkpoints, not speech still uncommitted during an outage/process crash.
+Plan disclosure/consent for AI participation and transcription under applicable policy/law; do not imply this app records
+audio or already implements a compliance workflow.
 
-## Network
+## Before customer production use
 
-- The app is exposed publicly because ACS and Event Grid must reach it. Restrict `/rep` and `/api/rep` further with Entra
-  sign-in (Container Apps authentication) or a private route plus IP allow-list.
-- ACS media streams over `wss://` to `/ws/{callId}`. Treat the call id as unguessable (it is an 8-character random hex) and
-  consider adding a signed token.
-- Put secrets in Key Vault references instead of inline Container Apps secrets if your standards require it.
+- Replace shared keys with authenticated, authorized rep/tenant access and identity-derived audit fields.
+- Replace broad demo Dataverse roles and review all agent tool permissions.
+- Restrict browser/API access without breaking authenticated ACS/Event Grid callbacks.
+- Define disclosure, transcript/journal/log retention and deletion; reduce sensitive logging.
+- Adopt approved secret storage/rotation, diagnostics, alerts and incident procedures.
+- Validate callback/JWT/token rejection, prompt injection, endpoint access and dependency posture in the target environment.
+- Complete live acceptance and a dedicated security review; track remaining work in the [backlog](19-intake-gateway-engineering-review.md).
 
-## Hardening checklist (before real customers)
-
-- [ ] Replace System Administrator with least-privilege Dataverse roles
-- [ ] Sign reps in with Entra (Container Apps auth) and record `submittedBy` from the identity
-- [ ] Remove or protect `/events/{callId}`
-- [ ] Verify Event Grid deliveries and restrict `/api/incoming`
-- [ ] Add recording and AI-disclosure prompt
-- [ ] Define transcript retention and deletion
-- [ ] Move secrets to Key Vault; rotate the current keys
-- [ ] Turn on Container Apps and Log Analytics diagnostics and alerts
-- [ ] Review the prompts for prompt-injection exposure: callers speak untrusted text to the agents
-- [ ] Penetration-test the console and webhook endpoints
-
-## Prompt-injection note
-
-Everything a caller says reaches the agents. The design limits the blast radius: agents cannot write tickets, the
-note-taker output is parsed as data, and only a human submits. Keep it that way, and never give either agent a write tool.
+Callers and model output are untrusted input. Keep strict output validation, read-only agent tools, protected rep edits
+and the draft-first workflow when extending the system.

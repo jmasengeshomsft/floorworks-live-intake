@@ -1,36 +1,51 @@
-# FloorWorks Live Intake — Documentation
+# Documentation
 
-Start here. Each section stands alone; read them in order for the full story, or jump to what you need.
+The supported application is the **Python Intake Gateway plus React Intake UI**.
+PowerShell and azd both deploy the Python gateway; the .NET project under `foundry` is separate knowledge-base tooling.
 
-| # | Section | Read it if you want to… |
-|---|---|---|
-| 01 | [Solution overview](01-overview.md) | understand the problem, the customer experience and the value |
-| 02 | [Architecture](02-architecture.md) | see how a call flows through every component, with diagrams ([voice-agent mode](architecture-voice-agent-mode.html), [step by step](architecture-voice-agent-steps.html)) |
-| 03 | [Deployment guide](03-deployment.md) | stand the solution up in your own tenant, step by step |
-| 04 | [Configuration reference](04-configuration.md) | look up every environment variable, connection and identifier |
-| 05 | [Data model](05-data-model.md) | see the Dataverse tables, columns, relationships and option values |
-| 06 | [AI agents](06-agents.md) | understand the voice agent, the note-taker, the toolbox and how to publish new versions |
-| 07 | [Rep console](07-rep-console.md) | use or extend the web console reps use to review and submit |
-| 08 | [Operations & troubleshooting](08-operations.md) | read logs, diagnose a bad call, fix common failures |
-| 09 | [Security & compliance](09-security.md) | review identities, roles, data handling and hardening work |
-| 10 | [Roadmap & known limits](10-roadmap.md) | know what is not done yet and what to build next |
-| 11 | [Demo guide](11-demo-guide.md) | run a clean demo, including a script and a recovery plan |
-| — | [Glossary](glossary.md) | decode the acronyms (ACS, TPE, MCP, ...) |
+## Current guides
 
-## Repo map
+| Guide | Purpose |
+|---|---|
+| [01 - Overview](01-overview.md) | Customer experience and draft-first workflow |
+| [02 - Architecture](02-architecture.md) | Components, call flow, identity and recovery boundaries |
+| [03 - Deployment](03-deployment.md) | Setup order and both supported deployment paths |
+| [04 - Configuration](04-configuration.md) | Current environment variables and shared table configuration |
+| [05 - Data model](05-data-model.md) | Business tables, drafts, journal and model changes |
+| [06 - AI agents](06-agents.md) | Voice/extraction contracts and read-only tools |
+| [07 - Intake UI](07-rep-console.md) | Draft review, editing and Submit |
+| [08 - Operations](08-operations.md) | Troubleshooting, safe upgrades and acceptance checks |
+| [09 - Security](09-security.md) | Existing controls and remaining hardening |
+| [10 - Roadmap](10-roadmap.md) | Known limits and priorities |
+| [11 - Demo guide](11-demo-guide.md) | Preparation, walkthrough and recovery |
+| [16 - Gateway deployment details](16-intake-gateway-deploy.md) | PowerShell packaging, verification and Speech migration |
+| [17 - Agent setup](17-agent-setup.md) | Connection, shared toolbox, prompts and publishing |
+| [18 - Table configuration](18-table-configuration.md) | `dataverse\config.json`, metadata discovery and overrides |
+| [Glossary](glossary.md) | ACS, TPE, MCP and other terms |
 
-| Folder | What lives there | Section README |
-|---|---|---|
-| `src/VoiceIntake` | **The product.** One app that owns the call, the speech-to-text, the agents and the rep console | [src/README.md](../src/README.md) |
-| `dataverse/` | Idempotent schema and seed script for the manufacturing data | [dataverse/README.md](../dataverse/README.md) |
-| `foundry/` | Agent instructions, publishing and Foundry-to-Dataverse wiring | [foundry/README.md](../foundry/README.md) |
-| `infra/` | Container Apps deployment, Event Grid and bot setup | [infra/README.md](../infra/README.md) |
-| `teams/` | Teams resource account, phone number and rep enablement | [teams/README.md](../teams/README.md) |
+## Specialist reference
 
-## Conventions used in these docs
+| Reference | Purpose |
+|---|---|
+| [12 - Dataverse MCP managed identity](12-dataverse-mcp-managed-identity-setup.md) | Manual project-identity setup |
+| [13 - Telephony wiring](13-telephony-wiring.md) | Resource-account and ACS wiring |
+| [14 - Telephony binding comparison](14-telephony-binding-comparison.md) | Binding approaches and investigation context |
+| [15 - Telephony binding runbook](15-telephony-binding-runbook.md) | Teams preflight and binding steps |
 
-- `<angle-brackets>` mark values you must supply.
-- Commands are PowerShell unless stated.
-- "Rep" means the human customer service representative. "Receptionist" means the AI voice agent that answers first.
-- The shipped demo values (tenant, resource names) appear only in clearly marked *Reference deployment* boxes; replace them with your own.
+## Engineering and proposed work
 
+| Document | Status |
+|---|---|
+| [19 - Engineering review/backlog](19-intake-gateway-engineering-review.md) | Historical review evidence plus scoped implementation updates; not a current deployment certificate |
+| [20 - Configuration-agent design](20-config-agent-design.md) | **Proposal**, not an implemented setup feature |
+
+Historical presentation diagrams may show earlier implementations; the maintained
+[architecture guide](02-architecture.md) describes the current code.
+
+## Repository guides
+
+[Application development](../src/README.md) · [Dataverse](../dataverse/README.md) ·
+[Foundry](../foundry/README.md) · [Infrastructure](../infra/README.md) · [Teams](../teams/README.md)
+
+Commands use PowerShell unless stated otherwise. Replace `<placeholders>` with your own values; keep private
+environment/configuration files and transcript data out of Git.
