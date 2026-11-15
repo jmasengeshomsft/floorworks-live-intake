@@ -1,26 +1,78 @@
-# infra — deployment and telephony plumbing
+# Infrastructure and deployment
 
-| File | Purpose | Status |
-|---|---|---|
-| `setup-tpe-azure.ps1` | Azure side of Teams Phone Extensibility: Entra bot app, Azure Bot with Teams calling channel, ACS service principal, Event Grid subscription | Rewrite not run as-is |
+**PowerShell and azd both deploy the Python Intake Gateway.** The React UI is hosted separately.
+Choose one owner for each Container App; do not alternate tools against the same app.
+Start with the [deployment guide](../docs/03-deployment.md) for schema, identity, agent and telephony ordering.
 
-The current product, **VoiceIntake**, deploys with the Azure Developer CLI: `main.bicep` (Log Analytics, ACR, Container Apps environment, the app with a managed identity, ACR pull and Foundry role assignments) and `foundry-roles.bicep`. See [docs/03-deployment.md](../docs/03-deployment.md#azd-quick-start).
+| File | Purpose |
+|---|---|
+| `deploy-gateway.ps1` | Build/update Python on existing infrastructure; secrets, access, Event Grid and verification |
+| `init-gateway-params.ps1` | Discover resources and produce a private gateway parameter file |
+| `gateway.parameters.example.json` | Tracked parameter template; keep customer copies out of Git |
+| `verify-gateway.ps1` | Read-only configuration, scale, health, Speech and Event Grid checks |
+| `speech-auth.ps1` | Shared Speech authentication/resource validation |
+| `main.bicep`, `main.parameters.json` | azd infrastructure and current Python environment/secret contract |
+| `acs.bicep`, `foundry.bicep` | Optional resource creation for fresh azd environments |
+| `foundry-roles.bicep`, `search-model-role.bicep` | Gateway Foundry/Speech and optional KB model access |
+| `setup-tpe-azure.ps1`, `rebind-tpe-azure.ps1` | Telephony bootstrap/rebinding with authenticated Event Grid setup |
+| `verify-bot.ps1`, `verify-teams-side.ps1` | Specialist telephony diagnostics |
 
-### Self-contained deployment (validated)
+## PowerShell path
 
-`azd provision` can create everything in a new resource group: set `CREATE_ACS=true` and `CREATE_FOUNDRY=true` (via `azd env set`) to add ACS (`acs.bicep`) and a Foundry account, project and model deployments (`foundry.bicep`); an optional Search service is created for Foundry IQ. The Search service has a system identity that is granted *Cognitive Services OpenAI User* on the Foundry account (`search-model-role.bicep`); without it knowledge-base queries fail with HTTP 502.
+```powershell
+# From the repository root; edit the private copy before deployment.
+Copy-Item .\infra\gateway.parameters.example.json .\infra\gateway.customer.json
+.\infra\deploy-gateway.ps1 -ParametersFile .\infra\gateway.customer.json -Plan
+.\infra\deploy-gateway.ps1 -ParametersFile .\infra\gateway.customer.json -Rebuild
+.\infra\verify-gateway.ps1 -ResourceGroup <rg> -AppName <app>
+```
 
-Order of operations:
+The deployer reuses/generates secrets, grants the gateway's Azure access and registers its Dataverse application user.
+Its demo Dataverse role is broad; replace it for customer use. It does **not** provision the required Dataverse
+schema/journal. Run the [Dataverse provisioner](../dataverse/README.md) first.
 
-1. `azd provision`, then `azd deploy`. Provisioning resets the app to a placeholder image, so always redeploy after re-provisioning.
-2. `foundry\setup-foundry.ps1`: Dataverse application user and the `dataverse-mfg-mi` connection for the project identity.
-3. `cd foundry; dotnet run -- all`: builds the Foundry IQ index, knowledge base and project connection.
-4. `foundry\create-agents.ps1 -Enrichment on|off`: creates the toolbox, note-taker and voice agent.
-5. Create a Dataverse application user (System Administrator) for the app identity (`APP_PRINCIPAL_ID`), the same way `setup-foundry.ps1` does for the project identity.
-6. Manual: the Event Grid `IncomingCall` subscription to `<PUBLIC_BASE_URL>/api/incoming`, and moving the phone number.
+New gateway files default to managed-identity Speech. Preflight checks resource kind, region and custom subdomain;
+deployment grants **Cognitive Services Speech User** and clears stale `SPEECH_KEY` environment references.
+Legacy key settings remain supported. See [Speech migration](../docs/16-intake-gateway-deploy.md#migrate-live-notes-to-managed-identity).
 
-## Notes
+## azd path
 
-- Create the Event Grid subscription only **after** the app is running: Event Grid validates the endpoint on creation.
-- If several apps share one ACS resource, filter `IncomingCall` events by `data.to.rawId` so each subscription only receives its own number.
-- Keep your `.env` (copied from `.env.example`) out of source control.
+`azure.yaml` retains service key `voice-intake` but builds `src\intake-gateway\Dockerfile`.
+Bicep provisions ACR, logging, a Container Apps environment/app and identity roles; it can also create ACS/Foundry
+and optional Search. It sends `dataverse\config.json`, API/HMAC secret references, current agent/transfer settings and
+keyless Speech using the Foundry account's resource ID/region.
+
+Use the [staged azd instructions](../docs/03-deployment.md#3b---azd-deployment):
+**provision -> configure both Dataverse identities and publish agents -> deploy -> authenticate Event Grid -> verify**.
+The public bootstrap image is not the gateway. Every reprovision resets the app image, so redeploy after provisioning.
+azd does not create Dataverse schema/application users, publish agents or bind the Teams number.
+
+The separate .NET CLI in `foundry` remains available for optional KB construction. Search/model RBAC is retained;
+`RUNNER_PRINCIPAL_ID` optionally grants the KB builder's Search roles.
+
+## Telephony integration
+
+`setup-tpe-azure.ps1` can prepare bot/ACS prerequisites before gateway deployment. Without `-EventGridSecret`, it warns
+and skips subscription creation. Once the gateway is running, supply the matching `EVENTGRID_SECRET` to create
+authenticated delivery, or let `deploy-gateway.ps1` wire it automatically.
+
+Event Grid validates the endpoint during creation, so a bootstrap image is insufficient. Check for competing
+`IncomingCall` subscriptions; when sharing ACS, filter by the intended `data.to.rawId`.
+Teams resource accounts may arrive as `28:orgid:<object-id>`, not an E.164 number.
+
+## Deployment constraint
+
+Both paths set min/max replicas to **one**. This does not prevent revision overlap or drain active calls.
+Pause routing, finish calls and stop old revisions before recovery/startup of the new gateway.
+See [safe upgrades](../docs/08-operations.md#safe-upgrades-and-rollback); local checks do not certify live acceptance.
+
+## Offline checks
+
+```powershell
+.\infra\tests\speech-auth.Tests.ps1
+.\infra\tests\setup-tpe-azure.Tests.ps1
+.\dataverse\tests\provision-journal.Tests.ps1
+az bicep build --file .\infra\main.bicep --stdout > $null
+```
+
+The PowerShell regressions use mocked resources/CLI/Web API calls; Bicep compilation does not deploy anything.

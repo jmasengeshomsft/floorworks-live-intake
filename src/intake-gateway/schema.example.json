@@ -1,0 +1,12 @@
+{
+  "names": {
+    "bdm_servicerequestdrafts": "acme_servicedrafts",
+    "bdm_servicetickets": "acme_servicetickets",
+    "bdm_callid": "acme_callreference",
+    "bdm_CustomerId": "acme_Customer"
+  },
+  "options": {
+    "status": { "draft": 100000000, "submitted": 100000001 },
+    "priority": { "low": 100000000, "medium": 100000001, "high": 100000002, "urgent": 100000003 }
+  }
+}

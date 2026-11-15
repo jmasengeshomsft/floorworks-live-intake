@@ -2,7 +2,6 @@
  Wires Foundry to Dataverse.
   1. Grants the Foundry PROJECT managed identity access to Dataverse (application user + role + allowed MCP client).
   2. Creates a project connection that uses the project managed identity (no per-user sign-in, so it works unattended).
-  3. Publishes a new version of the prompt agent pointing at that connection.
  Needs `az login` as someone who can administer the Dataverse environment and the Foundry project.
 #>
 [CmdletBinding()]

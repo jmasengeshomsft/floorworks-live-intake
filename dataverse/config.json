@@ -1,0 +1,38 @@
+{
+  "profile": "standard-account",
+  "roles": {
+    "customer": "account",
+    "ticket": "bdm_serviceticket",
+    "equipment": "bdm_equipment",
+    "draft": "bdm_servicerequestdraft",
+    "contact": "contact"
+  },
+  "describe": {
+    "contact": {
+      "table": "People at a customer company who call in. Standard Dataverse Contact table; each belongs to one account.",
+      "fullname": "Person's name",
+      "mobilephone": "Mobile number; the caller is matched on this and telephone1",
+      "parentcustomerid": "The account (company) this person works for"
+    },
+    "account": {
+      "table": "Customers (companies that call in). Standard Dataverse Account table.",
+      "name": "Company name",
+      "accountnumber": "Customer account number",
+      "telephone1": "Main phone; the caller is matched on this and telephone2/telephone3",
+      "emailaddress1": "Primary email"
+    },
+    "bdm_serviceticket": {
+      "table": "Service tickets. Created only by a human rep, never by an agent.",
+      "bdm_name": "Ticket title",
+      "bdm_description": "Problem description",
+      "bdm_priority": "Low, Normal, High or Urgent"
+    },
+    "bdm_equipment": {
+      "table": "Equipment / assets owned by an account (company)",
+      "bdm_name": "Equipment name, for example CNC Mill 3",
+      "bdm_assetnumber": "Asset number, for example EQ-1003",
+      "bdm_status": "Operational, Degraded, Down or Under Maintenance"
+    }
+  },
+  "ticketDescriptionMax": 4000
+}

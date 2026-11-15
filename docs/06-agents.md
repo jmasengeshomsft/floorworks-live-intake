@@ -1,124 +1,90 @@
-# 06 · AI agents
+# 06 - AI agents
 
-Two Microsoft Foundry agents work every call. Neither can create a service ticket.
+Two agents serve different roles. Neither is allowed to create tickets.
 
-| | Receptionist | Note-taker |
+| Agent | Responsibility | Default setup name |
 |---|---|---|
-| Name | `floorworks-voice-agent-app` | `floorworks-notetaker` |
-| Foundry type | Voice agent (realtime, speech to speech) | Prompt agent (text, structured JSON out) |
-| Talks to the caller | Yes | Never |
-| Triggered by | App opens a realtime WebSocket per call | App sends the transcript after each utterance and once at call end |
-| Dataverse access | Via **toolbox** `floorworks-dataverse` | Via project connection `dataverse-mfg-mi` |
-| Can write Dataverse | No (instructions forbid it) | No (instructions forbid it) |
-| Special tool | `transfer_to_rep` | none |
-| Instructions | Managed in Foundry (versioned) | `foundry/notetaker-instructions.md` |
+| Voice receptionist | Answers, collects details, reads business records, requests an explicit human handoff | `intake-voice-agent` |
+| Note-taker | Extracts structured notes and optional enrichment from the transcript | `intake-note-taker` |
 
-## Receptionist (voice agent)
+Use the names actually published in `VOICE_AGENT_NAME` and `EXTRACTOR_AGENT_NAME`.
+The authoritative setup procedure is [17 - Agent setup](17-agent-setup.md), using
+`foundry\setup-agents.ps1`. Older scripts/agent names are not required for this workflow.
 
-**Job:** answer, collect the caller's name, the equipment and the problem, look equipment up in Dataverse, and hand
-over to a human only when asked.
+## Publishing
 
-Behavior rules in its instructions:
-- Look up equipment by name or model using the Dataverse tools. Do **not** ask for an asset number.
-- Never create, update or delete records and never tell the caller a ticket was created.
-- Call `transfer_to_rep` **only** when the caller explicitly asks for a person. An earlier version offered a transfer
-  unprompted and customers were transferred unexpectedly.
-- At the start of each call the app injects a system message with the Call ID and the caller's phone number.
-
-**Transfer.** `transfer_to_rep` is handled by the app, not by Foundry. The app waits for the agent to finish speaking,
-then calls ACS `AddParticipant` for each Teams user in `REP_TEAMS_OBJECT_IDS`. On `AddParticipantSucceeded` the AI is
-muted. On `AddParticipantFailed` (for example 480 *Temporarily Unavailable* when the rep is offline or in Do Not Disturb, or
-603 *Decline*) the AI is un-muted and the caller keeps being helped.
-
-**Voice settings.** The agent connects over `wss://<account>.services.ai.azure.com/api/projects/<project>/agents/<name>/endpoint/protocols/voice?api-version=v1`
-using the `realtime` subprotocol and the `foundry-features: VoiceAgents=V1Preview` header. Audio is 24 kHz PCM.
-
-## Note-taker (prompt agent)
-
-**Input** (JSON per message):
-
-```json
-{"mode":"extract|finalize","call_id":"...","caller_phone":"...",
- "transcript":[{"speaker":"customer|assistant|rep","text":"..."}],
- "current":{ "...notes so far..." }}
-```
-
-**Output** (exactly one JSON object):
-
-```json
-{"fields":{"customer_name":null,"phone":null,"equipment_model":null,"equipment_serial_or_asset":null,
-           "location":null,"complaint":null,"priority":null,"preferred_time":null,"summary":null},
- "matches":[{"table":"","id":"","label":"","reason":""}],
- "missing":[],"next_question":null,"created":null,"action":"none","error":null}
-```
-
-- `matches` carries Dataverse record matches (equipment) that the app uses to link the draft.
-- `missing` and `next_question` become the **coaching** prompt shown to the rep.
-- `created` is always `null` and `action` is always `"none"`. This is a contract, and the app never acts on it.
-- It treats part numbers carefully (e.g. "HV 2020" may be "HV-220") and verifies against Dataverse when it can.
-
-When it runs: after each recognized utterance (extract) and once more after the call ends (finalize). Only one extraction runs per call at a time, so notes never regress from overlapping runs.
-
-### Optional enrichment (Foundry IQ)
-
-With `ENRICHMENT=on` the note-taker also gets the `floorworks-kb` MCP tool (`knowledge_base_retrieve`, via project connection `floorworks-kb`; instructions from `foundry/notetaker-enrichment.md`). It returns a separate `enrichment` object (likely cause, bulletin, parts with unit cost, suggested priority and reason, diagnostic steps, sources) that never changes `fields`. Publish with `$env:ENRICHMENT='on'; foundry\publish-draft-flow-agents.ps1`. The knowledge base is built by the CLI in `foundry/` (see `foundry/README.md`). The voice agent has no enrichment.
-
-## Toolbox `floorworks-dataverse`
-
-A Foundry **toolbox** bundles tools for voice agents. This one exposes the Dataverse MCP server:
-
-```json
-{ "tools": [ { "type": "mcp", "name": "dataverse-mfg", "server_label": "dataverse-mfg",
-               "server_url": "https://<org>.crm.dynamics.com/api/mcp",
-               "project_connection_id": "dataverse-mfg-mi" } ] }
-```
-
-(`foundry/toolbox.sample.json`). Important points:
-- The connection **must** be the managed-identity one (`dataverse-mfg-mi`). The OAuth2 connection returns
-  `CONSENT_REQUIRED` mid-call, which made the receptionist report it "had no Dataverse lookup tool".
-- Prompt agents cannot use toolboxes; the note-taker references the project connection directly.
-- A toolbox version number auto-increments on each POST. The voice agent definition pins `toolbox_version` and a
-  `server_url` containing `/versions/<n>/`, so publish a new voice-agent version after you publish a new toolbox version.
-- Verify a toolbox with an MCP `tools/list` call before going live.
-
-## Publishing new versions
-
-Agents are versioned; the app always uses the latest published version.
+Review `foundry\prompts\voice-instructions.md`, `foundry\prompts\notetaker-instructions.md` and
+`dataverse\config.json` before setup. The script renders the shared table configuration into the prompts,
+reuses/creates the managed-identity connection, and publishes versioned toolbox/agent definitions.
 
 ```powershell
-foundry/publish-draft-flow-agents.ps1                # note-taker and voice agent
-foundry/publish-draft-flow-agents.ps1 voice-only     # voice agent only
+.\foundry\setup-agents.ps1 -ProjectEndpoint https://<account>.services.ai.azure.com/api/projects/<project> `
+  -OrgUrl https://<org>.crm.dynamics.com -Plan
+# After reviewing the plan and project identity's Dataverse access:
+.\foundry\setup-agents.ps1 -ProjectEndpoint https://<account>.services.ai.azure.com/api/projects/<project> `
+  -OrgUrl https://<org>.crm.dynamics.com
 ```
 
-Notes for the REST API (`$ep` = project endpoint):
+`-GrantDataverseAccess` is opt-in and needs admin rights; its default demo role is broad.
+It registers the **project identity**, not the gateway identity.
 
-| Action | Call |
-|---|---|
-| Read agent | `GET $ep/agents/{name}?api-version=v1` (versions under `.versions.latest`) |
-| Publish version | `POST $ep/agents/{name}/versions?api-version=v1` body `{ "description": "...", "definition": { ... } }` |
-| Toolbox version | `POST $ep/toolboxes/{name}/versions?api-version=v1` with header `Foundry-Features: Toolboxes=V1Preview` |
-| Voice agent calls | add header `Foundry-Features: VoiceAgents=V1Preview` |
-| Token | `az account get-access-token --resource https://ai.azure.com` |
+## Receptionist contract
 
-> The publish script's receptionist text edits are string replacements against the *current* instructions. If the
-> instructions drift, review the script's output before relying on it, or edit the agent in the Foundry portal.
+The gateway opens the voice session and supplies call context. The receptionist uses read-only Dataverse tools
+and requests `transfer_to_rep` only when the caller asks. The gateway, not the model, executes ACS call-control
+operations and enforces after-hours behavior. Successful handoff mutes AI audio; failed transfer lets the AI continue.
 
-## Prompt-change checklist
+Configure reps with `TRANSFER_TEAMS_OBJECT_IDS`. Teams voice readiness and the gateway's ACS permissions remain
+deployment prerequisites. Reconnecting a voice session does not restore a live call after a process restart.
 
-1. Edit instructions (note-taker: `foundry/notetaker-instructions.md`; receptionist: Foundry portal or the script).
-2. Publish a new version.
-3. Place a short test call, and confirm no service ticket row appears.
-4. Check the draft fields and `bdm_summary`.
-5. Keep the *never create or change records* rule in both prompts.
+## Note-taker contract
 
-## Evaluating quality
+Extraction consumes the transcript and current notes. A typical output is:
 
-Track these across test calls:
+```json
+{
+  "fields": {
+    "customer_name": null, "phone": null, "equipment_model": null,
+    "equipment_serial_or_asset": null, "location": null, "complaint": null,
+    "priority": null, "preferred_time": null, "summary": null
+  },
+  "matches": [],
+  "missing": [],
+  "next_question": null,
+  "created": null,
+  "action": "none",
+  "error": null
+}
+```
 
-| Metric | How to check |
-|---|---|
-| Greeting latency | Time between answer and first AI audio (logs) |
-| Unprompted transfers | `transfer_to_rep requested` without an explicit ask in the transcript |
-| Equipment match rate | Draft has `bdm_equipmentid` after the call |
-| Field accuracy | Compare draft fields with what was said |
-| Tool failures | `CONSENT_REQUIRED`, timeouts or "no tool" statements in the AI's speech |
+The complete contract lives in
+[`app/extraction_models.py`](../src/intake-gateway/app/extraction_models.py).
+Matches must identify allowed tables and valid UUIDs; referenced records/customer relationships are checked.
+Optional `EXTRACTION_SCHEMA` validates `fields` locally. Truncated or incompatible JSON is rejected, not repaired
+into success; the last valid result remains available and failure/retry state is visible in the API/UI.
+
+Extraction is serialized per call and may coalesce incoming speech. A final pass runs at call end; finalization
+is bounded and can fail. Dataverse journaling can resume unfinished extraction after restart or retry persistence
+of a checkpointed valid result without calling the model again. It does not replay function side effects.
+
+## Tools and approval
+
+The shared toolbox exposes `describe`, `read_query` and `search` by default, using the Foundry project's managed
+identity. Both agent definitions pin the appropriate toolbox version/MCP endpoint; setup configures approval
+as `never` so unattended calls do not stall awaiting a user click.
+
+Keep the tool allowlist read-only and grant a corresponding least-privilege Dataverse role. Prompt instructions
+alone are not an authorization boundary. Never expose the internal call journal as an agent tool.
+If the connection/toolbox changes, republish both agents together.
+
+## Optional Foundry IQ enrichment
+
+Build the knowledge base using the separate [.NET Foundry IQ CLI](../foundry/README.md), then publish the agents
+with `-Enrichment on` and enable `ENRICHMENT=on` on the gateway. Enrichment is a separate AI-suggested block,
+not caller-said fields. A rep still reviews and submits the ticket.
+
+## Change acceptance
+
+After publishing, make a real call: verify tool access without approvals, explicit-only handoff, valid extraction,
+preserved rep corrections and **no ticket before Submit**. Check failures and final extraction as well as the happy path.
+Publishing an agent or passing local tests does not establish live acceptance.

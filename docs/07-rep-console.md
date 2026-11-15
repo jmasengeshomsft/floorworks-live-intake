@@ -1,93 +1,71 @@
-# 07 · Rep console
+# 07 - Intake UI
 
-A single-page web app served by VoiceIntake at `/rep`. It is the reps' view of a call and the only place a ticket is created.
+The rep console is now the separate **React Intake UI** in `src\intake-ui`.
+The gateway exposes `/v1` REST/SSE; it does not serve the retired `/rep?k=` page or `/api/rep/*` API.
 
-## Opening it
+## Open and connect
 
+From `src\intake-ui`:
+
+```powershell
+npm ci
+npm run dev
 ```
-https://<fqdn>/rep?k=<REP_KEY>                 # pick a call from the list
-https://<fqdn>/rep?k=<REP_KEY>&call=<callId>   # open a specific call
-https://<fqdn>/rep?k=<REP_KEY>&rep=<name>      # also records who submitted
-```
 
-- Open it **before** a call starts. The call list refreshes every 15 s and does not jump to a new call on its own; the open
-  draft refreshes every 2 s.
-- The call id appears in the app log line `WS connected; rep UI: <url>/rep?call=<id>`.
-- If `REP_KEY` is empty the console is open to anyone who has the URL. Always set it.
+Open `http://localhost:5173`. Enter the gateway URL and an API key from `API_KEYS` in the connection bar.
+Allow that exact browser origin in the gateway's `CORS_ORIGINS`.
+For hosted use, run `npm run build` and serve `dist` from your approved static host over HTTPS.
 
-## Screen layout
+Connection settings, including the API key, are stored in browser localStorage. Treat the browser profile as
+credential-bearing: use trusted devices, clear settings after a shared demo, and do not put keys in screenshots.
+Shared keys do not provide per-user authorization.
 
-| Area | What it shows |
-|---|---|
-| **Call picker** | Live calls and recent drafts |
-| **Transcript** | Labeled lines: customer, AI assistant, rep, streamed live |
-| **Coaching** | The note-taker's suggested next question and what is missing |
-| **Service Intake Form** | Fixed set of fields, filled live (see below) |
-| **Customer card** | Linked customer, or suggested matches and a search box |
-| **Equipment card** | Equipment for the customer; click a row to link |
-| **Submit** | Creates the Service Ticket |
+## Review a call
 
-### Service Intake Form fields
+Select a call/draft to see the transcript, extracted fields, coaching, enrichment, relationship links and events.
+The UI consumes authenticated SSE while a call is live. Replay gaps/slow-consumer resets reload snapshots and reconnect;
+the browser's event history is not a durable audit record.
 
-| Field | Draft column | Type |
-|---|---|---|
-| Customer name | `bdm_customername` | Text |
-| Contact phone | `bdm_contactphone` | Text (defaults to caller phone) |
-| Equipment | `bdm_equipmenttext` | Text |
-| Asset number | `bdm_assetnumber` | Text |
-| Location | `bdm_location` | Text |
-| Preferred time | `bdm_preferredtime` | Text |
-| Complaint | `bdm_complaint` | Multiline |
-| Priority | `bdm_priority` | Low / Normal / High / Urgent |
-| Summary | `bdm_summary` | Multiline |
+Draft fields include customer name, contact phone, equipment/asset text, location, preferred time, complaint,
+priority and summary. Correct fields, select relationships, then press **Save**.
+Saved rep edits, including explicit clears, are protected from later AI updates.
+Do not assume unsaved browser edits have reached Dataverse.
 
-A line under the form shows whether a customer and equipment are linked. The form is a fixed shape on purpose: it keeps the
-note-taker's output schema, the Dataverse columns and the UI in lockstep.
+## Customer, equipment and contact links
 
-## How editing behaves
+Customer search remains available on linked drafts. When changing a customer, replace or explicitly clear incompatible
+equipment/contact links in the **same edit**. Use the clear-links checkbox when appropriate; the gateway rejects
+mismatches instead of silently choosing a different relationship. Individual equipment/contact links can also be cleared.
 
-- A field you are typing in, or have changed and not yet saved, is **never overwritten** by a refresh.
-- Edits save automatically after 700 ms of inactivity.
-- Every saved edit adds the field name to `bdm_editedfields`; from then on agents will not overwrite that field.
-- Fields highlight briefly when an agent changes them.
-- After **Submit**, every field and the button are disabled and the line reads *Submitted by &lt;name&gt;*.
+Creating a customer requires clearing existing equipment/contact links first. The gateway validates relationships
+again at Submit. Required equipment depends on the configured table profile; the current UI reflects that configuration.
 
 ## Submit
 
-1. Unsaved edits are flushed.
-2. The app requires **both a linked customer and linked equipment**; otherwise Submit fails with *choose a customer and
-   equipment first*.
-3. It creates one `bdm_serviceticket` titled `FloorWorks-Voice-<account number>-<yyyyMMddHHmm>`, status Open, with the draft's
-   priority and the linked customer and equipment. The description holds Call ID, Customer, Contact phone, Location,
-   Preferred time, the complaint and the call summary.
-4. The draft is set to *Submitted*, stamped with `submittedby` and `submittedon`, and linked via `bdm_ticketid`.
-5. A second submit on the same draft is rejected (`draft already submitted`).
+Review the draft and linked records before **Submit ticket**. The gateway commits ticket creation, any overflow note
+and the Submitted draft link atomically. Retrying a completed submission returns the existing ticket rather than
+creating another one. Concurrent business edits use ETags and can return a conflict requiring a refresh/review.
 
-## API reference
+Submitted drafts are read-only for business edits and AI field updates. Transcript mirroring may continue until the
+call/journal work finishes. The entered rep name is still caller-supplied metadata, not a verified signed-in identity.
 
-All routes require the rep key as `?k=<key>` or header `x-rep-key`. Responses are JSON.
+## Failure states
 
-| Method & route | Body | Result |
-|---|---|---|
-| `GET /api/rep/calls` | — | `{ live: [callId...], recent: [draft...] }` |
-| `GET /api/rep/draft/{callId}` | — | `{ callId, live, draft, customer, candidates, transcript }` |
-| `POST /api/rep/draft/{callId}` | Any of `customername, contactphone, equipmenttext, assetnumber, location, preferredtime, complaint, summary, priority, customerId, equipmentId` | `200` or `400 { error }` |
-| `POST /api/rep/draft/{callId}/submit` | `{ "submittedBy": "name" }` | `{ ticket: "<ticket title>" }` or `400 { error }` |
-| `GET /api/rep/customers?q=` | — | Customers matching name, account number or phone |
-| `GET /api/rep/equipment?customerId=` | — | Equipment, optionally for one customer |
+Extraction failures retain the previous valid result and expose an explicit retry action. Check checkpoint/persistence
+errors as well: a visible transcript can be newer than its last successful Dataverse checkpoint.
+Completed, failed, expired or cancelled function invocations cannot accept late results.
 
-`GET /events/{callId}` is an unauthenticated server-sent-event stream of `partial`, `final` (speaker + text) and `error` /
-`end` events for custom UIs. Do not expose it publicly in production ([Security](09-security.md)).
+If requests fail, check the browser network response, gateway key/URL, exact CORS origin and
+[operations guide](08-operations.md). `/healthz` alone does not establish Dataverse write or Speech success.
 
-## Building the same experience in Power Apps
+## API and alternative front ends
 
-The console is a thin client over Dataverse. A Power Apps canvas or model-driven app can replace it with no backend change:
+The [gateway README](../src/intake-gateway/README.md#api)
+lists the supported routes; `/v1/drafts/{callId}` is the review/edit endpoint and
+`POST /v1/drafts/{callId}/submit` owns ticket creation.
 
-1. Add `bdm_servicerequestdraft` as a data source; filter `bdm_status = Draft`, sort by `createdon` descending.
-2. Bind form controls to the nine columns above; poll or use a timer control for live refresh.
-3. Respect the rule: when a rep edits a field, append its name to `bdm_editedfields`.
-4. On Submit, either call a Power Automate flow that mirrors the Submit logic in `Drafts.cs`, or call the app's
-   `/api/rep/draft/{callId}/submit` endpoint through a custom connector.
-5. Show the transcript from `bdm_transcript`.
+A Power Apps/custom front end should use those mutation endpoints rather than reimplementing Submit or writing
+draft fields directly: direct writes can bypass edited-field ownership, relationship checks, ETags and atomicity.
+Preserve the draft-first/human-submit workflow.
 
-Canvas apps must be authored in Power Apps Studio; they cannot be generated from this repo.
+Mocked relationship and resilience browser regressions are documented in the [UI README](../src/intake-ui/README.md).
