@@ -94,6 +94,9 @@ export interface GatewayConfig {
   liveNotes: string
   afterHoursMode: string
   afterHoursNow: boolean
+  serviceTz: string
+  serviceDays: string
+  serviceHours: string
   transferTargets: number
   webhooks: number
   simulator?: boolean

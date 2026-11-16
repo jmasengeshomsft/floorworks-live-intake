@@ -46,11 +46,17 @@ For unattended initialization:
   -AcsResourceName <acs> -FoundryAccount <account> -FoundryProject <project> `
   -VoiceAgent <voice-agent> -ExtractorAgent <note-taker> `
   -DataverseUrl https://<org>.crm.dynamics.com `
+  -CorsOrigins https://<ui-host> `
+  -AfterHours auto -ServiceTz America/Chicago -ServiceDays Mon-Fri -ServiceHours 07:00-18:00 `
   -PhoneNumber +15551234567 -ResourceAccountObjectId <guid>
 ```
 
 Alternatively copy `infra\gateway.parameters.example.json` and edit it. These files can contain credentials and are
 git-ignored; never commit/share them. New Speech settings use managed identity, not a retrieved account key.
+The initializer prompts for office-hours settings, or accepts the non-interactive arguments above, and writes
+explicit `auto` defaults. Review them for the service location. Legacy parameter files without these fields retain
+existing app settings. See [automatic office hours](04-configuration.md#automatic-office-hours) for overrides,
+timezone/daylight-saving handling and the per-call behavior at closing.
 
 ## Check and deploy
 
@@ -92,6 +98,8 @@ Neither script implements automatic call draining, comprehensive native-command 
 | `transferTeamsObjectIds` | Rep Entra IDs |
 | `corsOrigins` | Exact origins of separately hosted Intake UI clients |
 | `liveNotes`, `enrichment`, `brandName` | Optional feature/branding settings |
+| `afterHours` | `auto` in new files; `on`/`off` force a mode; omitted legacy settings are not deployed |
+| `serviceTz`, `serviceDays`, `serviceHours` | Complete shared daily schedule required with explicit `auto`; defaults/examples are `America/Chicago`, `Mon-Fri`, `07:00-18:00` |
 | `speechAuth` | `aad` for new files; legacy files with only `speechKey` retain key mode |
 | `speechResourceId` | Full ARM ID; empty selects the discovered Foundry account |
 | `speechRegion` | Derived/checked against the AAD account, or supplied for key mode |
@@ -123,7 +131,8 @@ az containerapp revision list -g <rg> -n <app> -o table
 az containerapp logs show -g <rg> -n <app> --tail 100 --format text
 ```
 
-The verifier checks ingress, scale, required settings, health, Speech, Event Grid secret/filter and recent error signals.
+The verifier checks ingress, scale, required settings, health, Speech, office-hours configuration/runtime agreement,
+the ignored `AFTER_HOUR` typo, Event Grid secret/filter and recent error signals.
 It is read-only and exits nonzero on failures; a clean result is not a full acceptance test.
 Build/host the [React UI](07-rep-console.md), allow its origin and connect using the gateway URL/API key.
 There is no gateway-hosted `/rep` console.
@@ -144,5 +153,5 @@ Coordinated rotation remains engineering work. Do not rotate a callback HMAC sec
 of the Event Grid secret. URL query secrets must be kept out of logs/screenshots.
 
 For failure triage and live acceptance, use [operations](08-operations.md#live-acceptance).
-Offline checks: `infra\tests\speech-auth.Tests.ps1`, `infra\tests\setup-tpe-azure.Tests.ps1` and
+Offline checks: `infra\tests\after-hours.Tests.ps1`, `infra\tests\speech-auth.Tests.ps1`, `infra\tests\setup-tpe-azure.Tests.ps1` and
 `dataverse\tests\provision-journal.Tests.ps1`.

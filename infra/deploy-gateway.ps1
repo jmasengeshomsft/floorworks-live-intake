@@ -59,6 +59,7 @@ function Problem($m, $fix) { Write-Host "  [FAIL] $m" -ForegroundColor Red; if (
 function J($t) { $s = ($t | Out-String).Trim(); if ($s) { $s | ConvertFrom-Json } }
 function Az-Quiet { $r = & az @args 2>$null; if ($LASTEXITCODE -ne 0) { return $null }; $r }
 . (Join-Path $PSScriptRoot 'speech-auth.ps1')
+. (Join-Path $PSScriptRoot 'after-hours.ps1')
 
 function Grant($principal, $roleId, $scope, $label) {
   $out = az role assignment create --assignee-object-id $principal --assignee-principal-type ServicePrincipal --role $roleId --scope $scope --only-show-errors -o none 2>&1
@@ -77,6 +78,13 @@ foreach ($k in 'subscriptionId','resourceGroup','appName','acrName','environment
   if (-not $p.$k -or "$($p.$k)" -match '^<') { throw "Parameter '$k' is missing or still a placeholder in $ParametersFile" }
 }
 $rg = $p.resourceGroup; $app = $p.appName
+$officeHours = Resolve-GatewayAfterHoursSettings $p
+$officeHoursEnv = @(Get-GatewayAfterHoursEnvironment $officeHours)
+if ($officeHours.Configured) {
+  Info "after hours=$($officeHours.Mode); schedule=$($officeHours.Days) $($officeHours.Hours) ($($officeHours.TimeZone))"
+} else {
+  Info "no office-hours overrides: existing app settings stay unchanged; a new app defaults to off"
+}
 
 # The shared Dataverse config (dataverse\config.json) stays out of the image: deploy resolves it here and sends only the
 # schema/profile settings. Parameters override the file.
@@ -204,6 +212,7 @@ foreach ($k in $plain.Keys) { if ("$($plain[$k])".Trim()) { $envVars += "$k=$($p
 $envVars += 'ACS_CONNECTION_STRING=secretref:acs-connection-string', 'GATEWAY_SECRET=secretref:gateway-secret',
             'EVENTGRID_SECRET=secretref:eventgrid-secret', 'API_KEYS=secretref:api-keys'
 $envVars += $speechEnv
+$envVars += $officeHoursEnv
 
 if (-not $existing) {
   Info "creating $app"

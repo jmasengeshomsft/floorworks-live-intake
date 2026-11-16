@@ -11,6 +11,7 @@ Start with the [deployment guide](../docs/03-deployment.md) for schema, identity
 | `gateway.parameters.example.json` | Tracked parameter template; keep customer copies out of Git |
 | `verify-gateway.ps1` | Read-only configuration, scale, health, Speech and Event Grid checks |
 | `speech-auth.ps1` | Shared Speech authentication/resource validation |
+| `after-hours.ps1` | Shared explicit office-hours validation and environment mapping; preserves legacy omissions |
 | `main.bicep`, `main.parameters.json` | azd infrastructure and current Python environment/secret contract |
 | `acs.bicep`, `foundry.bicep` | Optional resource creation for fresh azd environments |
 | `foundry-roles.bicep`, `search-model-role.bicep` | Gateway Foundry/Speech and optional KB model access |
@@ -34,6 +35,11 @@ schema/journal. Run the [Dataverse provisioner](../dataverse/README.md) first.
 New gateway files default to managed-identity Speech. Preflight checks resource kind, region and custom subdomain;
 deployment grants **Cognitive Services Speech User** and clears stale `SPEECH_KEY` environment references.
 Legacy key settings remain supported. See [Speech migration](../docs/16-intake-gateway-deploy.md#migrate-live-notes-to-managed-identity).
+New files also select `afterHours=auto`, `serviceTz=America/Chicago`, `serviceDays=Mon-Fri`, and
+`serviceHours=07:00-18:00`. Review these before deploying. The initializer supports corresponding
+`-AfterHours`, `-ServiceTz`, `-ServiceDays`, and `-ServiceHours` arguments. Legacy omissions leave live settings
+unchanged. Timezone validation needs PowerShell 7.2+ with ICU; use IANA names, not Windows-only timezone names.
+See [automatic office hours](../docs/04-configuration.md#automatic-office-hours) for boundaries and overrides.
 
 ## azd path
 
@@ -69,6 +75,7 @@ See [safe upgrades](../docs/08-operations.md#safe-upgrades-and-rollback); local 
 ## Offline checks
 
 ```powershell
+.\infra\tests\after-hours.Tests.ps1
 .\infra\tests\speech-auth.Tests.ps1
 .\infra\tests\setup-tpe-azure.Tests.ps1
 .\dataverse\tests\provision-journal.Tests.ps1
