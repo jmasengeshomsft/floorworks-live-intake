@@ -36,6 +36,7 @@ function Bad($m)  { Write-Host "  [FAIL] $m" -ForegroundColor Red; $script:fail+
 function Warn($m) { Write-Host "  [WARN] $m" -ForegroundColor Yellow; $script:warn++ }
 function J($t)    { if ($t) { $t | ConvertFrom-Json } }
 . (Join-Path $PSScriptRoot 'speech-auth.ps1')
+. (Join-Path $PSScriptRoot 'after-hours.ps1')
 
 Write-Host "`n== Container App" -ForegroundColor Cyan
 $app = J (az containerapp show -g $ResourceGroup -n $AppName -o json 2>$null | Out-String)
@@ -74,6 +75,42 @@ if ($env['LINE_NUMBERS']) {
 }
 if ($env['ACS_CONNECTION_STRING'] -match 'endpoint=https://([^./]+)\.') { Ok "ACS in connection string: $($Matches[1])" }
 
+Write-Host "`n== Office hours" -ForegroundColor Cyan
+if ($env.ContainsKey('AFTER_HOUR')) {
+  $message = "AFTER_HOUR is ignored. Use AFTER_HOURS (with the final S) and remove the misspelled variable."
+  if ($env.ContainsKey('AFTER_HOURS')) { Warn $message } else { Bad $message }
+}
+$config = $null
+if ($env['API_KEYS']) {
+  try {
+    $key = ($env['API_KEYS'] -split ',')[0].Trim()
+    $config = Invoke-RestMethod "https://$fqdn/v1/config" -Headers @{ 'x-api-key' = $key } -TimeoutSec 30
+  } catch { Bad "Cannot read runtime configuration: $($_.Exception.Message)" }
+}
+try {
+  $officeHours = Resolve-GatewayAfterHoursSettings ([pscustomobject]@{
+    afterHours = $(if ($env.ContainsKey('AFTER_HOURS')) { $env['AFTER_HOURS'] } else { 'off' })
+    serviceTz = $(if ($env.ContainsKey('SERVICE_TZ')) { $env['SERVICE_TZ'] } else { 'America/Chicago' })
+    serviceDays = $(if ($env.ContainsKey('SERVICE_DAYS')) { $env['SERVICE_DAYS'] } else { 'Mon-Fri' })
+    serviceHours = $(if ($env.ContainsKey('SERVICE_HOURS')) { $env['SERVICE_HOURS'] } else { '07:00-18:00' })
+  })
+  Ok "after hours=$($officeHours.Mode); office open $($officeHours.Days) $($officeHours.Hours) ($($officeHours.TimeZone))"
+  if ($config) {
+    $expected = @{
+      afterHoursMode = $officeHours.Mode; serviceTz = $officeHours.TimeZone
+      serviceDays = $officeHours.Days; serviceHours = $officeHours.Hours
+    }
+    foreach ($field in $expected.Keys) {
+      if ($null -eq $config.PSObject.Properties[$field]) {
+        Bad "Running gateway does not report $field. Rebuild/deploy the current image."
+      } elseif ([string]$config.$field -cne [string]$expected[$field]) {
+        Bad "Runtime $field=$($config.$field) differs from deployed $field=$($expected[$field]). Check the serving revision/traffic."
+      }
+    }
+    Ok "running gateway afterHoursNow=$($config.afterHoursNow); existing calls keep their starting mode"
+  }
+} catch { Bad "Office hours: $($_.Exception.Message)" }
+
 Write-Host "`n== Speech (live notes)" -ForegroundColor Cyan
 $speechParameters = [pscustomobject]@{
   liveNotes = $env['LIVE_NOTES']; speechAuth = $env['SPEECH_AUTH']; speechKey = $env['SPEECH_KEY']
@@ -97,9 +134,7 @@ try {
     Ok "Speech AAD resource, region, custom subdomain and gateway role assignment verified"
   } elseif (-not $env['SPEECH_KEY']) { throw "Speech key authentication is enabled but SPEECH_KEY is missing." }
   else { Ok "Speech key authentication configured" }
-  if ($speech.Enabled -and $env['API_KEYS']) {
-    $key = ($env['API_KEYS'] -split ',')[0].Trim()
-    $config = Invoke-RestMethod "https://$fqdn/v1/config" -Headers @{ 'x-api-key' = $key } -TimeoutSec 30
+  if ($speech.Enabled -and $config) {
     if ($config.liveNotes -ne 'azure-speech') { throw "Live notes requested but the running gateway reports liveNotes=$($config.liveNotes)." }
     Ok "running gateway has the Speech transcriber enabled; a real call is still required to prove transcription"
   }

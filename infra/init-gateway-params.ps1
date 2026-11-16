@@ -23,6 +23,10 @@ param(
 [string]$CorsOrigins,
   [string]$DataverseUrl,
   [string]$BrandName,
+  [string]$AfterHours = 'auto',
+  [string]$ServiceTz = 'America/Chicago',
+  [string]$ServiceDays = 'Mon-Fri',
+  [string]$ServiceHours = '07:00-18:00',
   [string]$EnvironmentName,
   [string]$AcrName,
   [switch]$NonInteractive,
@@ -50,6 +54,7 @@ function Warn($m) { Write-Host "  [WARN] $m" -ForegroundColor Yellow }
 function J($t) { $s = ($t | Out-String).Trim(); if ($s) { $s | ConvertFrom-Json } }
 function Az-Quiet { $r = & az @args 2>$null; if ($LASTEXITCODE -ne 0) { return $null }; $r }
 . (Join-Path $PSScriptRoot 'speech-auth.ps1')
+. (Join-Path $PSScriptRoot 'after-hours.ps1')
 
 function Pick($label, $items, $display) {
   $items = @($items)
@@ -65,6 +70,21 @@ function Pick($label, $items, $display) {
     Write-Host "  Enter a number from the list." -ForegroundColor Yellow
   }
 }
+
+Step "Office hours (review for the service location)"
+$officeHours = [ordered]@{
+  afterHours = $AfterHours; serviceTz = $ServiceTz; serviceDays = $ServiceDays; serviceHours = $ServiceHours
+}
+if (-not $NonInteractive) {
+  foreach ($field in $officeHours.Keys) {
+    if (-not $PSBoundParameters.ContainsKey($field)) {
+      $answer = Read-Host "  $field [$($officeHours[$field])]"
+      if (-not [string]::IsNullOrWhiteSpace($answer)) { $officeHours[$field] = $answer }
+    }
+  }
+}
+$officeHours = Resolve-GatewayAfterHoursSettings ([pscustomobject]$officeHours)
+Ok "after hours=$($officeHours.Mode); office open $($officeHours.Days) $($officeHours.Hours) ($($officeHours.TimeZone))"
 
 $nameRx = '^[a-z][a-z0-9-]{1,30}[a-z0-9]$'
 $appExplicit = [bool]$AppName
@@ -243,6 +263,7 @@ $params = [ordered]@{
   foundryProjectEndpoint = $endpoint; voiceAgentName = $voice; extractorAgentName = $extractor
   resourceAccountObjectId = "$oid"; lineNumbers = "$phone"; transferTeamsObjectIds = ($tIds -join ','); corsOrigins = "$cors"
   liveNotes = 'on'; enrichment = 'off'; dataverseUrl = "$dvUrl"; brandName = "$brand"
+  afterHours = $officeHours.Mode; serviceTz = $officeHours.TimeZone; serviceDays = $officeHours.Days; serviceHours = $officeHours.Hours
   speechAuth = 'aad'; speechResourceId = $speech.ResourceId; speechRegion = $speech.Region; speechKey = ''; apiKeys = ''
 }
 $out = Join-Path $PSScriptRoot "gateway.$Name.json"

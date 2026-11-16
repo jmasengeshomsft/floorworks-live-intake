@@ -57,6 +57,26 @@ Only explicitly retry-safe operations receive application retries: Dataverse rea
 failures are not retried; Dataverse writes retain their ETag/idempotency logic, and non-idempotent ACS/function
 operations are not blindly retried. Retry waits and token acquisition have overall deadlines.
 
+## Automatic office hours
+
+New `.env` copies select this example schedule; review it for the service location:
+
+```dotenv
+AFTER_HOURS=auto
+SERVICE_TZ=America/Chicago
+SERVICE_DAYS=Mon-Fri
+SERVICE_HOURS=07:00-18:00
+```
+
+`auto` evaluates the local clock when a call arrives: opening is inclusive, closing is exclusive, and other days
+are after hours. IANA timezone rules handle daylight saving. After-hours calls collect details instead of transferring
+to a rep. Each call retains its starting mode, even across closing. There is no timer job or daily restart.
+`on` forces after hours; `off` disables it. The runtime fallback stays `off` for existing deployments without a mode.
+Overnight windows, split shifts and holidays are not supported. `/v1/config` reports the mode, current status and
+three effective schedule fields. Use `AFTER_HOURS`, not the ignored `AFTER_HOUR` typo.
+Restart/redeploy only when changing configuration; observe the
+[maintenance constraints](../../docs/08-operations.md#safe-upgrades-and-rollback).
+
 ## API
 
 Authenticate with `x-api-key`, `Authorization: Bearer`, or `?key=` (SSE). Empty `API_KEYS` disables auth

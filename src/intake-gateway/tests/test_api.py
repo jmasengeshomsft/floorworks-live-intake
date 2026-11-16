@@ -136,6 +136,16 @@ def test_config_reports_live_notes():
     assert c.get("/v1/config", headers={"x-api-key": "k"}).json()["liveNotes"] == "off"
 
 
+def test_config_reports_effective_office_schedule():
+    c = TestClient(mk(after_hours="auto", service_tz="Europe/Paris",
+                      service_days="Tue-Sat", service_hours="09:00-17:30"))
+    config = c.get("/v1/config").json()
+    assert {key: config[key] for key in ("afterHoursMode", "serviceTz", "serviceDays", "serviceHours")} == {
+        "afterHoursMode": "auto", "serviceTz": "Europe/Paris",
+        "serviceDays": "Tue-Sat", "serviceHours": "09:00-17:30",
+    }
+
+
 def _call_app(**kw):
     app = mk(**kw)
     return app, TestClient(app)
@@ -325,6 +335,39 @@ def test_incoming_answer_failure_returns_5xx_and_retries():
     assert c.post("/api/incoming", json=ev).status_code == 500
     acs.fail_answer = False
     assert c.post("/api/incoming", json=ev).status_code == 200  # same event id is processed again, not deduped
+
+
+def test_calls_keep_starting_mode_and_closed_office_blocks_transfer(monkeypatch):
+    from datetime import datetime
+    from unittest.mock import AsyncMock
+
+    evaluate = afterhours.is_active
+    clock = [datetime.fromisoformat("2026-11-16T23:59:00+00:00")]
+    monkeypatch.setattr(afterhours, "is_active", lambda settings: evaluate(settings, clock[0]))
+    acs = _FakeAcs()
+    acs.answer = AsyncMock()
+    app = create_app(Settings(local_dev=True, live_notes=False, after_hours="auto",
+                              transfer_teams_ids=["rep"]), acs=acs)
+    app.state.gateway._do_transfer = AsyncMock()
+    event = {"eventType": "Microsoft.Communication.IncomingCall", "data": {"incomingCallContext": "ctx"}}
+    with TestClient(app) as c:
+        assert c.post("/api/incoming", json={**event, "id": "open"}).status_code == 200
+        open_id = acs.answer.await_args.args[1]
+        app.state.store.get(open_id).conn_id = "connected"
+        assert c.get("/v1/config").json()["afterHoursNow"] is False
+
+        clock[0] = datetime.fromisoformat("2026-11-17T00:00:00+00:00")
+        assert c.get("/v1/config").json()["afterHoursNow"] is True
+        assert c.get(f"/v1/calls/{open_id}").json()["afterHours"] is False
+        assert c.post(f"/v1/calls/{open_id}/transfer").json() == {"status": "connecting"}
+
+        assert c.post("/api/incoming", json={**event, "id": "closed"}).status_code == 200
+        closed_id = acs.answer.await_args.args[1]
+        assert c.get(f"/v1/calls/{closed_id}").json()["afterHours"] is True
+        assert c.post(f"/v1/calls/{closed_id}/transfer").json() == {
+            "status": "unavailable", "reason": "after_hours",
+        }
+    app.state.gateway._do_transfer.assert_awaited_once()
 
 
 def test_voice_connect_failure_hangs_up(monkeypatch):

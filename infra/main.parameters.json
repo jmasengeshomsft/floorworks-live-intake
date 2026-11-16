@@ -21,6 +21,9 @@
     "corsOrigins": { "value": "${CORS_ORIGINS=}" },
     "enrichment": { "value": "${ENRICHMENT=off}" },
     "afterHours": { "value": "${AFTER_HOURS=off}" },
+    "serviceTz": { "value": "${SERVICE_TZ=America/Chicago}" },
+    "serviceDays": { "value": "${SERVICE_DAYS=Mon-Fri}" },
+    "serviceHours": { "value": "${SERVICE_HOURS=07:00-18:00}" },
     "deploySearch": { "value": "${DEPLOY_SEARCH=true}" },
     "runnerPrincipalId": { "value": "${RUNNER_PRINCIPAL_ID=}" },
     "ringback": { "value": "${RINGBACK=on}" }

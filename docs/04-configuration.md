@@ -55,6 +55,47 @@ gateway settings; use the current names below and connect the separate UI.
 Boolean environment switches use `on`/`off`, except `LOCAL_DEV` uses `0`/`1`. Malformed settings fail early rather than
 silently taking defaults. The gateway's validation does not create role assignments or Dataverse application users.
 
+## Automatic office hours
+
+New parameter files and the gateway environment example explicitly enable `auto`. Review the schedule for the
+service location:
+
+```json
+{
+  "afterHours": "auto",
+  "serviceTz": "America/Chicago",
+  "serviceDays": "Mon-Fri",
+  "serviceHours": "07:00-18:00"
+}
+```
+
+PowerShell maps these to `AFTER_HOURS`, `SERVICE_TZ`, `SERVICE_DAYS`, and `SERVICE_HOURS`. Explicit `auto`
+parameters require the complete schedule; any supplied schedule must include all three fields.
+Use case-sensitive IANA names (such as `America/Chicago`, `Europe/Paris`, or `UTC`), not Windows-only names or
+fixed UTC offsets. PowerShell validation requires PowerShell 7.2+ with ICU support.
+The timezone rules handle daylight-saving changes automatically.
+
+The office is open on the selected days from opening **inclusive** to closing **exclusive**. Outside that window
+and on other days, the voice agent collects details for follow-up and the gateway blocks transfer to a Teams rep.
+The window is shared across the selected weekdays; overnight hours, split shifts, holidays and date exceptions
+are not supported. Changing the date/time into or out of this window needs **no timer job, deployment or agent
+republish**.
+
+Each call keeps its mode from admission. A call started before closing may still transfer afterward.
+Authenticated `GET /v1/config` reports `afterHoursMode`, `afterHoursNow`, `serviceTz`, `serviceDays`, and
+`serviceHours`; the current office status may intentionally differ from an older call's `afterHours` flag.
+
+Use `afterHours: "on"` to force after hours or `"off"` to disable it. Mode-only PowerShell overrides leave existing
+schedule variables unchanged. Legacy parameter files that omit all four fields do not overwrite existing app settings;
+new apps with such legacy files still use the runtime fallback `off`. Existing local `.env` files are not changed.
+For azd, explicitly persist the four variables using the [new-environment setup](03-deployment.md#3b---azd-deployment);
+its legacy mode fallback remains `off`. Preserve any existing customer schedule rather than applying example defaults.
+
+The name is **`AFTER_HOURS`**, not `AFTER_HOUR`. The latter is ignored, not an alias; the verifier diagnoses it.
+Changing deployed configuration creates a new revision: use the
+[maintenance procedure](08-operations.md#safe-upgrades-and-rollback) to avoid disrupting calls or overlapping gateways.
+The verifier compares configured and running settings; older images without the schedule response fields must be rebuilt.
+
 ## One Dataverse configuration
 
 `dataverse\config.json` names the customer/contact/equipment/ticket/draft roles and optional mapping overrides.

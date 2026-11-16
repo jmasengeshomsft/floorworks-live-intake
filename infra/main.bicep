@@ -54,6 +54,15 @@ param extractorAgentName string = 'intake-note-taker'
 param enrichment string = 'off'
 @allowed(['on', 'off', 'auto'])
 param afterHours string = 'off'
+@minLength(1)
+@description('Case-sensitive IANA timezone for office hours, including daylight-saving rules.')
+param serviceTz string = 'America/Chicago'
+@minLength(1)
+@description('Working weekdays, e.g. Mon-Fri or Mon,Wed,Fri.')
+param serviceDays string = 'Mon-Fri'
+@minLength(1)
+@description('Same-day opening-inclusive, closing-exclusive HH:MM-HH:MM window.')
+param serviceHours string = '07:00-18:00'
 @allowed(['on', 'off'])
 param ringback string = 'on'
 
@@ -253,6 +262,9 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'PUBLIC_BASE_URL', value: publicBase }
             { name: 'ENRICHMENT', value: enrichment }
             { name: 'AFTER_HOURS', value: afterHours }
+            { name: 'SERVICE_TZ', value: serviceTz }
+            { name: 'SERVICE_DAYS', value: serviceDays }
+            { name: 'SERVICE_HOURS', value: serviceHours }
             { name: 'RINGBACK', value: ringback }
           ]
         }

@@ -65,7 +65,7 @@ From the repository root:
 
 ```powershell
 Copy-Item .\infra\gateway.parameters.example.json .\infra\gateway.customer.json
-# Edit the private JSON: resources, agent names, Dataverse URL, CORS and transfer settings.
+# Edit the private JSON: resources, agents, Dataverse URL, CORS, transfers and office hours.
 .\infra\deploy-gateway.ps1 -ParametersFile .\infra\gateway.customer.json -Plan
 .\infra\deploy-gateway.ps1 -ParametersFile .\infra\gateway.customer.json -Rebuild
 ```
@@ -76,6 +76,9 @@ for the demo; review/replace it before customer use. It does not provision the D
 
 New parameter files use keyless Speech. Existing key-based files remain supported; see
 [deployment and Speech migration details](16-intake-gateway-deploy.md).
+New files also explicitly enable [automatic office hours](04-configuration.md#automatic-office-hours):
+review the timezone, service days and opening/closing times before deployment.
+Legacy files without office-hours fields leave the existing app schedule unchanged.
 
 ## 3B - azd deployment
 
@@ -96,6 +99,10 @@ azd env set VOICE_AGENT_NAME intake-voice-agent
 azd env set EXTRACTOR_AGENT_NAME intake-note-taker
 azd env set TRANSFER_TEAMS_OBJECT_IDS <rep-object-id>
 azd env set CORS_ORIGINS http://localhost:5173
+azd env set AFTER_HOURS auto
+azd env set SERVICE_TZ America/Chicago
+azd env set SERVICE_DAYS Mon-Fri
+azd env set SERVICE_HOURS 07:00-18:00
 azd env set DEPLOY_SEARCH false
 
 function New-DeploymentSecret {
@@ -110,6 +117,9 @@ azd provision
 Generate these secrets **once** for a new environment; do not rotate them on every deployment.
 API/HMAC secrets are secure Bicep parameters and Container Apps secrets, not plaintext container environment values.
 Protect the local azd environment file too.
+The office-hours values above are new-environment examples. For existing azd environments, retain/import their
+actual `AFTER_HOURS` and `SERVICE_*` settings instead of overwriting them with these defaults. If unset, the azd
+mode remains `off`; adopting `auto` is explicit. Daily schedule transitions do not create new revisions.
 
 To create ACS/Foundry instead of reusing them, set `CREATE_ACS=true` and/or `CREATE_FOUNDRY=true` before provision.
 New Foundry model deployments require regional availability/quota. Set `DEPLOY_SEARCH=true` only when provisioning
