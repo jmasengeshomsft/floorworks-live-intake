@@ -28,6 +28,7 @@ PowerShell and azd both deploy the Python gateway; the .NET project under `found
 | Reference | Purpose |
 |---|---|
 | [12 - Dataverse MCP managed identity](12-dataverse-mcp-managed-identity-setup.md) | Manual project-identity setup |
+| [13 - New environment end-to-end setup](13-new-environment-end-to-end-setup.md) | From-scratch runbook: Dataverse, Foundry identity, app users, gateway, phone line, verification |
 | [13 - Telephony wiring](13-telephony-wiring.md) | Resource-account and ACS wiring |
 | [14 - Telephony binding comparison](14-telephony-binding-comparison.md) | Binding approaches and investigation context |
 | [15 - Telephony binding runbook](15-telephony-binding-runbook.md) | Teams preflight and binding steps |
