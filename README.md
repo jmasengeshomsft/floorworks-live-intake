@@ -36,6 +36,7 @@ Caller -> ACS -> Python gateway <-> Foundry voice agent
 | [Intake UI](docs/07-rep-console.md) | Review, correct and submit drafts |
 | [Operations](docs/08-operations.md) | Diagnose startup/call failures and deploy safely |
 | [Documentation index](docs/README.md) | All guides, reference material and development backlog |
+| [New environment setup](docs/13-new-environment-end-to-end-setup.md) | From-scratch runbook for a new Dataverse environment and phone line |
 
 ## Repository layout
 

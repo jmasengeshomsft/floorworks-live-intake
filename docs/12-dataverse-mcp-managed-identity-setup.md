@@ -1,6 +1,7 @@
 # Manual setup: Foundry agent -> Dataverse MCP via project managed identity
 
 Manual, step-by-step replication of `foundry\setup-foundry.ps1`.
+For a complete from-scratch setup of a new environment (with verification and troubleshooting), see [13 - New environment end-to-end setup](13-new-environment-end-to-end-setup.md). The **application user (Step 3)** is mandatory: without it the toolbox returns `HTTP_403 Access denied when connecting to the MCP server`.
 
 ## Prerequisites
 
